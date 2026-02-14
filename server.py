@@ -7,13 +7,14 @@ from datetime import datetime, timezone
 from flask import Flask, Response, request, jsonify
 
 # ━━ CONFIG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-BOOT          = time.time()
-MAX_UP        = 21300
-AGENT_GAP     = 22
-USER_WAIT     = 5
-MODEL         = "llama-3.1-8b-instant"
-BACKUP        = "meta-llama/llama-4-scout-17b-16e-instruct"
-PORT          = 8080
+BOOT        = time.time()
+MAX_UP      = 21300
+AGENT_GAP   = 28
+USER_WAIT   = 5
+MODEL       = "llama-3.1-8b-instant"
+BACKUP      = "meta-llama/llama-4-scout-17b-16e-instruct"
+PORT        = 8080
+MAX_PAPERS  = 15
 
 ARXIV_CATS = [
     "cs.AI", "cs.LG", "cs.CL", "cs.CV", "stat.ML",
@@ -29,71 +30,95 @@ AGENTS = [
         "focus": "equations, proofs, formal consistency, mathematical generalization",
     },
     {
-        "name": "Feynman", "role": "Physics & Intuition Specialist", "avatar": "⚛️",
+        "name": "Feynman", "role": "Physics & Intuition", "avatar": "⚛️",
         "color": "#03a9f4",
         "personality": "Curious, intuitive, loves analogies, hates unnecessary complexity",
-        "style": "Checks physical plausibility, connects to known theories, simplifies ideas",
-        "focus": "physical plausibility, real-world grounding, intuition, established science",
+        "style": "Checks physical plausibility, connects to known theories, simplifies",
+        "focus": "physical plausibility, grounding, intuition, simplification",
     },
     {
-        "name": "Hinton", "role": "ML & Architecture Critic", "avatar": "🧠",
+        "name": "Hinton", "role": "ML Architect", "avatar": "🧠",
         "color": "#9c27b0",
-        "personality": "Deep thinker about learning, skeptical of hype, focused on what works",
-        "style": "Questions model capacity, architecture alternatives, worries about generalization",
-        "focus": "architecture, training, generalization, scalability, compute costs",
+        "personality": "Deep thinker about learning, skeptical of hype, practical",
+        "style": "Questions model capacity, architecture, worries about generalization",
+        "focus": "architecture, training, generalization, scalability, compute",
     },
     {
-        "name": "Popper", "role": "Critical Reviewer & Skeptic", "avatar": "🧩",
+        "name": "Popper", "role": "Critical Reviewer", "avatar": "🧩",
         "color": "#f44336",
         "personality": "Relentlessly critical, demands evidence, hates overstatement",
-        "style": "Finds weak claims, demands ablation studies, checks experimental validity",
-        "focus": "claims vs evidence, experimental design, reproducibility, limitations",
+        "style": "Finds weak claims, demands ablation, checks experimental validity",
+        "focus": "claims vs evidence, reproducibility, experimental design, rigor",
     },
     {
         "name": "Tesla", "role": "Speculative Visionary", "avatar": "🔮",
         "color": "#4caf50",
-        "personality": "Wild imagination grounded in technical understanding, cross-domain thinker",
+        "personality": "Wild imagination grounded in technical understanding",
         "style": "Proposes bold extensions, cross-field connections, future applications",
-        "focus": "novel extensions, cross-domain ideas, future implications, wild combinations",
+        "focus": "novel extensions, cross-domain ideas, future implications",
     },
 ]
 
 PHASES = [
     {
         "name": "SUMMARY", "label": "📖 Summary Phase",
-        "desc": "Agents summarize the paper from their perspective",
+        "desc": "Each agent summarizes the paper from their perspective",
         "rounds": 5,
-        "prompt": 'Summarize this paper\'s key contribution FROM YOUR PERSPECTIVE as {role}. What stands out? What is the core idea? Focus on aspects relevant to your expertise ({focus}). Under 100 words.',
+        "prompt": 'Summarize this paper from YOUR perspective as {role}. What stands out? Core idea? Focus on {focus}. Under 100 words.',
     },
     {
         "name": "CRITIQUE", "label": "🔍 Critique Phase",
-        "desc": "Each agent critiques from their domain expertise",
+        "desc": "Each agent critiques from their domain",
         "rounds": 5,
-        "prompt": 'Critique this paper from your perspective as {role}. Weaknesses? Missing pieces? Questionable assumptions? Be specific and technical. Reference what others said if useful. Under 100 words.',
+        "prompt": 'Critique this paper as {role}. Weaknesses? Missing pieces? Bad assumptions? Be specific, technical. Reference others if useful. Under 100 words.',
     },
     {
         "name": "CROSSFIRE", "label": "⚔️ Cross-Examination",
-        "desc": "Agents challenge each other's points",
-        "rounds": 8,
-        "prompt": 'Respond to {target}\'s point. Agree, disagree, or push deeper. Ask a follow-up or challenge them. Stay in character as {role}. Under 80 words.',
+        "desc": "Agents challenge each other directly",
+        "rounds": 10,
+        "prompt": 'Respond to {target}\'s point — agree, disagree, or push deeper. Challenge them. Stay in character as {role}. Under 90 words.',
     },
     {
         "name": "PROPOSAL", "label": "💡 Proposal Phase",
-        "desc": "Propose extensions, experiments, and new directions",
+        "desc": "Propose extensions, experiments, new directions",
         "rounds": 5,
-        "prompt": 'Propose ONE concrete extension, experiment, or improvement. Be specific — what would you actually build or test? Think from your perspective as {role} ({focus}). Under 100 words.',
+        "prompt": 'Propose ONE concrete extension, experiment, or improvement based on this paper. Be specific — what would you build or test? Think as {role} ({focus}). Under 100 words.',
     },
     {
-        "name": "VERDICT", "label": "🤝 Verdict Phase",
-        "desc": "Final verdicts and key takeaways",
+        "name": "VERDICT", "label": "🏛️ Verdict Phase",
+        "desc": "Final ratings and takeaways",
         "rounds": 5,
-        "prompt": 'Final verdict. Key strength, key weakness, significance rating (1-10). As {role}, give your bottom line on this paper. Under 80 words.',
+        "prompt": 'Final verdict. Key strength, key weakness, significance rating 1-10. As {role}, your bottom line. Under 80 words.',
     },
 ]
 
 USER_COLORS = [
-    "#ff9800","#e91e63","#9c27b0","#03a9f4",
-    "#4caf50","#ff5722","#00bcd4","#cddc39",
+    "#ff9800", "#e91e63", "#9c27b0", "#03a9f4",
+    "#4caf50", "#ff5722", "#00bcd4", "#cddc39",
+]
+
+FALLBACK_PAPERS = [
+    {
+        "title": "Attention Is All You Need",
+        "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train.",
+        "authors": "Vaswani, Shazeer, Parmar et al.",
+        "link": "https://arxiv.org/abs/1706.03762",
+        "categories": ["cs.CL", "cs.LG"],
+    },
+    {
+        "title": "Scaling Laws for Neural Language Models",
+        "abstract": "We study empirical scaling laws for language model performance on the cross-entropy loss. The loss scales as a power-law with model size, dataset size, and the amount of compute used for training, with some trends spanning more than seven orders of magnitude.",
+        "authors": "Kaplan, McCandlish, Henighan et al.",
+        "link": "https://arxiv.org/abs/2001.08361",
+        "categories": ["cs.LG", "cs.CL"],
+    },
+    {
+        "title": "Denoising Diffusion Probabilistic Models",
+        "abstract": "We present high quality image synthesis results using diffusion probabilistic models, a class of latent variable models inspired by considerations from nonequilibrium thermodynamics.",
+        "authors": "Ho, Jain, Abbeel",
+        "link": "https://arxiv.org/abs/2006.11239",
+        "categories": ["cs.LG", "stat.ML"],
+    },
 ]
 
 # ━━ STATE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -101,7 +126,7 @@ state = {
     "paper": None, "paper_num": 0,
     "phase": None, "phase_idx": -1,
     "agents": AGENTS, "messages": [],
-    "typing": None,
+    "typing": None, "total_papers": MAX_PAPERS,
 }
 users = {}
 color_idx = [0]
@@ -111,17 +136,23 @@ user_queue = queue.Queue()
 class Bus:
     def __init__(self):
         self._q, self._lock = [], threading.Lock()
+
     def listen(self):
         q = queue.Queue(maxsize=400)
-        with self._lock: self._q.append(q)
+        with self._lock:
+            self._q.append(q)
         return q
+
     def drop(self, q):
         with self._lock:
             try: self._q.remove(q)
             except: pass
+
     @property
     def viewers(self):
-        with self._lock: return len(self._q)
+        with self._lock:
+            return len(self._q)
+
     def emit(self, ev, data):
         m = f"event: {ev}\ndata: {json.dumps(data)}\n\n"
         dead = []
@@ -137,6 +168,7 @@ bus = Bus()
 
 # ━━ GROQ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 _client = None
+
 def groq():
     global _client
     if not _client:
@@ -151,7 +183,8 @@ def llm(system, history, instruction, model=MODEL):
     try:
         r = groq().chat.completions.create(
             model=model, messages=msgs,
-            temperature=0.8, max_tokens=200)
+            temperature=0.8, max_tokens=200,
+        )
         t = r.choices[0].message.content.strip()
         t = re.sub(r'^[\w]+\s*[:—\-]\s*', '', t)
         return t.strip('"\'')
@@ -166,81 +199,48 @@ def tleft():
 def now_hm():
     return datetime.now(timezone.utc).strftime("%H:%M")
 
-# ━━ ARXIV FETCHER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-def fetch_papers(count=12):
+# ━━ ARXIV ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def fetch_papers():
     papers = []
-    cats = random.sample(ARXIV_CATS, min(4, len(ARXIV_CATS)))
+    cats = random.sample(ARXIV_CATS, min(5, len(ARXIV_CATS)))
     q = "+OR+".join(f"cat:{c}" for c in cats)
     url = (
         f"http://export.arxiv.org/api/query?"
         f"search_query={q}&sortBy=submittedDate"
-        f"&sortOrder=descending&max_results={count}"
+        f"&sortOrder=descending&max_results=40"
     )
+    ns = {"a": "http://www.w3.org/2005/Atom"}
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Colloquium/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=20) as r:
             raw = r.read()
-        ns = {
-            "a": "http://www.w3.org/2005/Atom",
-            "x": "http://arxiv.org/schemas/atom",
-        }
         root = ET.fromstring(raw)
         for entry in root.findall("a:entry", ns):
-            title = entry.find("a:title", ns).text.strip().replace("\n", " ")
-            title = re.sub(r'\s+', ' ', title)
-            abstract = entry.find("a:summary", ns).text.strip().replace("\n", " ")
-            abstract = re.sub(r'\s+', ' ', abstract)
-            authors = [
-                a.find("a:name", ns).text
-                for a in entry.findall("a:author", ns)
-            ]
+            title = re.sub(r'\s+', ' ', entry.find("a:title", ns).text.strip())
+            abstract = re.sub(r'\s+', ' ', entry.find("a:summary", ns).text.strip())
+            authors = [a.find("a:name", ns).text for a in entry.findall("a:author", ns)]
             link = entry.find("a:id", ns).text
             for l in entry.findall("a:link", ns):
                 if l.get("title") == "pdf":
                     link = l.get("href", link)
                     break
-            categories = [c.get("term","") for c in entry.findall("a:category", ns)]
-            if len(abstract) > 100:
+            categories = [c.get("term", "") for c in entry.findall("a:category", ns)]
+            if len(abstract) > 120:
                 papers.append({
                     "title": title,
                     "abstract": abstract,
                     "authors": ", ".join(authors[:4]) + ("..." if len(authors) > 4 else ""),
                     "link": link,
-                    "categories": categories[:4],
+                    "categories": categories[:5],
                 })
     except Exception as e:
-        print(f"  ⚠ arXiv fetch error: {e}")
+        print(f"  ⚠ arXiv fetch: {e}")
     return papers
-
-FALLBACK_PAPERS = [
-    {
-        "title": "Attention Is All You Need",
-        "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train.",
-        "authors": "Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, Polosukhin",
-        "link": "https://arxiv.org/abs/1706.03762",
-        "categories": ["cs.CL", "cs.LG"],
-    },
-    {
-        "title": "Scaling Laws for Neural Language Models",
-        "abstract": "We study empirical scaling laws for language model performance on the cross-entropy loss. The loss scales as a power-law with model size, dataset size, and the amount of compute used for training, with some trends spanning more than seven orders of magnitude. Other architectural details such as network width or depth have minimal effects within a wide range.",
-        "authors": "Kaplan, McCandlish, Henighan, Brown, Chess, Child, Gray, Radford, Wu, Amodei",
-        "link": "https://arxiv.org/abs/2001.08361",
-        "categories": ["cs.LG", "cs.CL"],
-    },
-    {
-        "title": "Denoising Diffusion Probabilistic Models",
-        "abstract": "We present high quality image synthesis results using diffusion probabilistic models, a class of latent variable models inspired by considerations from nonequilibrium thermodynamics. Our best results are obtained by training on a weighted variational bound designed according to a novel connection between diffusion probabilistic models and denoising score matching with Langevin dynamics.",
-        "authors": "Ho, Jain, Abbeel",
-        "link": "https://arxiv.org/abs/2006.11239",
-        "categories": ["cs.LG", "stat.ML"],
-    },
-]
 
 # ━━ STREAM AI MESSAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def stream_ai(agent, text, history):
     words = text.split()
-    wps = max(0.05, min(16 / max(len(words), 1), 0.4))
-
+    wps = max(0.04, min(14 / max(len(words), 1), 0.35))
     bus.emit("msgstart", {
         "speaker": agent["name"], "avatar": agent["avatar"],
         "color": agent["color"], "role": agent["role"],
@@ -249,7 +249,6 @@ def stream_ai(agent, text, history):
     for i, w in enumerate(words):
         bus.emit("word", {"w": w, "i": i, "of": len(words)})
         time.sleep(wps)
-
     msg = {
         "type": "message", "speaker": agent["name"],
         "avatar": agent["avatar"], "color": agent["color"],
@@ -259,24 +258,19 @@ def stream_ai(agent, text, history):
     state["typing"] = None
     history.append({"role": "assistant", "content": f"[{agent['name']}]: {text}"})
     bus.emit("msgdone", {"speaker": agent["name"], "text": text, "time": now_hm()})
-    print(f"  {agent['avatar']} {agent['name']}: {text[:70]}...")
+    print(f"    {agent['avatar']} {agent['name']}: {text[:72]}...")
 
-# ━━ HANDLE USER MESSAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━ HANDLE USER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def handle_user(paper, history):
-    """Drain queue, pick agent, respond. Returns True if handled."""
     try:
         umsg = user_queue.get_nowait()
     except queue.Empty:
         return False
-
     while not user_queue.empty():
         try: user_queue.get_nowait()
         except: break
-
     time.sleep(random.uniform(2, USER_WAIT))
-
     agent = random.choice(AGENTS)
-
     recent = []
     for m in state["messages"][-8:]:
         if m.get("type") == "user":
@@ -284,22 +278,19 @@ def handle_user(paper, history):
         elif m.get("type") == "message":
             recent.append(f'{m["speaker"]}: {m["text"]}')
     ctx = "\n".join(recent[-5:])
-
-    system = f"""You are {agent['name']} — {agent['role']}.
-Personality: {agent['personality']}. Style: {agent['style']}.
-You're in a research roundtable discussing:
-"{paper['title']}"
-Abstract: {paper['abstract'][:400]}
-A human asked a question or made a comment. Respond helpfully and warmly, staying in character. Use their name. Under 80 words."""
-
-    inst = f"Recent discussion:\n{ctx}\n\nRespond to the human. Under 80 words."
-
+    system = (
+        f"You are {agent['name']} — {agent['role']}.\n"
+        f"Personality: {agent['personality']}. Style: {agent['style']}.\n"
+        f'Roundtable discussing: "{paper["title"]}"\n'
+        f"Abstract: {paper['abstract'][:400]}\n"
+        f"A human spoke. Respond warmly, in character, use their name. Under 80 words."
+    )
+    inst = f"Recent:\n{ctx}\n\nRespond to the human. Under 80 words."
     state["typing"] = agent["name"]
     bus.emit("typing", {
         "name": agent["name"], "avatar": agent["avatar"],
         "color": agent["color"], "role": agent["role"],
     })
-
     try:
         text = llm(system, history, inst)
         stream_ai(agent, text, history)
@@ -310,34 +301,38 @@ A human asked a question or made a comment. Respond helpfully and warmly, stayin
 
 # ━━ ENGINE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def engine():
-    time.sleep(1)
+    time.sleep(1.5)
+
     print("\n🔬 Fetching papers from arXiv...")
-    papers = fetch_papers(12)
-    if not papers:
-        print("  ⚠ Using fallback papers")
-        papers = list(FALLBACK_PAPERS)
+    papers = fetch_papers()
+    if len(papers) < MAX_PAPERS:
+        print(f"  ⚠ Only got {len(papers)}, adding fallbacks")
+        papers.extend(FALLBACK_PAPERS)
     random.shuffle(papers)
-    print(f"  ✓ {len(papers)} papers loaded\n")
+    papers = papers[:MAX_PAPERS]
+    print(f"  ✓ {len(papers)} papers queued\n")
 
-    pidx = 0
+    for pidx, paper in enumerate(papers):
+        if tleft() < 120:
+            break
 
-    while tleft() > 120 and pidx < len(papers):
-        paper = papers[pidx]; pidx += 1
         state["paper"] = paper
-        state["paper_num"] += 1
+        state["paper_num"] = pidx + 1
 
-        print(f"\n{'='*55}")
-        print(f"📄 Paper #{state['paper_num']}: {paper['title'][:55]}...")
-        print(f"   {paper['authors']}")
-        print(f"   {', '.join(paper['categories'])}")
-        print(f"{'='*55}")
+        print(f"\n{'='*58}")
+        print(f"  📄 [{pidx+1}/{len(papers)}] {paper['title'][:50]}...")
+        print(f"     {paper['authors']}")
+        print(f"     {', '.join(paper['categories'][:3])}")
+        print(f"     ⏱ {tleft()//60}m remaining")
+        print(f"{'='*58}")
 
         pmsg = {
             "type": "paper", "title": paper["title"],
             "abstract": paper["abstract"],
             "authors": paper["authors"], "link": paper["link"],
             "categories": paper["categories"],
-            "number": state["paper_num"], "time": now_hm(),
+            "number": pidx + 1, "total": len(papers),
+            "time": now_hm(),
         }
         state["messages"].append(pmsg)
         bus.emit("newpaper", pmsg)
@@ -345,10 +340,11 @@ def engine():
         history = [{"role": "user", "content":
             f'PAPER: "{paper["title"]}"\n'
             f'Authors: {paper["authors"]}\n'
-            f'Abstract: {paper["abstract"]}'}]
+            f'Abstract: {paper["abstract"]}'
+        }]
 
         for phi, phase in enumerate(PHASES):
-            if tleft() < 120:
+            if tleft() < 90:
                 break
 
             state["phase"] = phase["name"]
@@ -361,27 +357,24 @@ def engine():
             }
             state["messages"].append(ph_msg)
             bus.emit("newphase", ph_msg)
-            print(f"\n  {phase['label']}")
-
+            print(f"\n    {phase['label']}")
             time.sleep(3)
 
             for rnd in range(phase["rounds"]):
                 if tleft() < 60:
                     break
 
-                # user check
+                # check user messages first
                 if handle_user(paper, history):
                     continue
 
-                # pick agent
                 agent = AGENTS[rnd % len(AGENTS)]
 
-                # pick target for crossfire
+                # pick crossfire target
                 target = None
                 if phase["name"] == "CROSSFIRE":
                     others = [a for a in AGENTS if a["name"] != agent["name"]]
-                    # prefer whoever spoke last
-                    for m in reversed(state["messages"][-6:]):
+                    for m in reversed(state["messages"][-8:]):
                         if m.get("type") == "message" and m["speaker"] != agent["name"]:
                             target = next((a for a in others if a["name"] == m["speaker"]), None)
                             break
@@ -394,18 +387,16 @@ def engine():
                     "color": agent["color"], "role": agent["role"],
                 })
 
-                system = f"""You are {agent['name']} — {agent['role']}.
-Personality: {agent['personality']}
-Style: {agent['style']}
-Focus: {agent['focus']}
-
-Research roundtable analyzing a paper.
-Paper: "{paper['title']}"
-Abstract: {paper['abstract'][:500]}
-
-Phase: {phase['label']} — {phase['desc']}
-{"Humans are watching and may ask questions — acknowledge them if relevant." if users else ""}
-Be substantive, specific, in character. Don't start with your name."""
+                system = (
+                    f"You are {agent['name']} — {agent['role']}.\n"
+                    f"Personality: {agent['personality']}\n"
+                    f"Style: {agent['style']}\nFocus: {agent['focus']}\n\n"
+                    f'Research roundtable analyzing: "{paper["title"]}"\n'
+                    f"Abstract: {paper['abstract'][:500]}\n\n"
+                    f"Phase: {phase['label']} — {phase['desc']}\n"
+                    f"{'Humans are watching. Acknowledge them if relevant.' if users else ''}\n"
+                    f"Be substantive, specific, in character. Don't start with your name."
+                )
 
                 inst = phase["prompt"].format(
                     role=agent["role"],
@@ -414,18 +405,16 @@ Be substantive, specific, in character. Don't start with your name."""
                 )
                 inst = f'Paper: "{paper["title"]}"\n{inst}'
 
-                # add recent context for later phases
                 if phase["name"] in ("CROSSFIRE", "PROPOSAL", "VERDICT"):
                     recent = [
                         f'{m["speaker"]}: {m["text"]}'
-                        for m in state["messages"][-6:]
+                        for m in state["messages"][-8:]
                         if m.get("type") == "message"
                     ]
                     if recent:
-                        inst += "\n\nRecent:\n" + "\n".join(recent[-4:])
+                        inst += "\n\nRecent:\n" + "\n".join(recent[-5:])
 
-                # sometimes reference user
-                for m in reversed(state["messages"][-8:]):
+                for m in reversed(state["messages"][-10:]):
                     if m.get("type") == "user":
                         if random.random() < 0.25:
                             inst += f'\n(Human {m["user_name"]} said: "{m["text"]}" — weave in if relevant.)'
@@ -435,10 +424,9 @@ Be substantive, specific, in character. Don't start with your name."""
                     text = llm(system, history, inst)
                     stream_ai(agent, text, history)
                 except Exception as e:
-                    print(f"  ✖ {e}")
+                    print(f"    ✖ {e}")
                     state["typing"] = None
 
-                # wait before next turn
                 if rnd < phase["rounds"] - 1:
                     nxt = AGENTS[(rnd + 1) % len(AGENTS)]
                     bus.emit("waiting", {
@@ -459,32 +447,23 @@ Be substantive, specific, in character. Don't start with your name."""
 
         # paper done
         if tleft() > 60:
-            done_msg = {
+            dmsg = {
                 "type": "system",
-                "text": f"✅ Analysis of paper #{state['paper_num']} complete — moving on...",
+                "text": f"✅ Paper #{pidx+1} analysis complete — {len(papers)-pidx-1} remaining",
                 "time": now_hm(),
             }
-            state["messages"].append(done_msg)
-            bus.emit("system", done_msg)
-            time.sleep(5)
+            state["messages"].append(dmsg)
+            bus.emit("system", dmsg)
+            time.sleep(4)
 
-        # if we exhausted papers, fetch more
-        if pidx >= len(papers) and tleft() > 300:
-            print("\n🔬 Fetching more papers...")
-            more = fetch_papers(10)
-            if more:
-                random.shuffle(more)
-                papers.extend(more)
-                print(f"  ✓ {len(more)} more loaded")
-
-    # shutdown
-    cnt  = len([m for m in state["messages"] if m.get("type") == "message"])
+    # session end
+    cnt = len([m for m in state["messages"] if m.get("type") == "message"])
     ucnt = len([m for m in state["messages"] if m.get("type") == "user"])
     bus.emit("shutdown", {
         "total_msgs": cnt, "total_papers": state["paper_num"],
         "user_msgs": ucnt, "users": len(users),
     })
-    print(f"\n⏰ Done. {cnt} AI · {ucnt} human msgs · {state['paper_num']} papers.")
+    print(f"\n⏰ Done. {cnt} agent msgs · {ucnt} human · {state['paper_num']} papers.")
 
 # ━━ FLASK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 app = Flask(__name__)
@@ -531,13 +510,18 @@ def stream():
     q = bus.listen()
     def gen():
         init = {
-            "paper": state["paper"], "paper_num": state["paper_num"],
-            "phase": state["phase"], "phase_idx": state["phase_idx"],
+            "paper": state["paper"],
+            "paper_num": state["paper_num"],
+            "total_papers": MAX_PAPERS,
+            "phase": state["phase"],
+            "phase_idx": state["phase_idx"],
             "agents": AGENTS,
             "messages": state["messages"][-150:],
             "typing": state["typing"],
-            "boot": BOOT, "max_up": MAX_UP, "timeleft": tleft(),
-            "users": list(users.values()), "viewers": bus.viewers,
+            "boot": BOOT, "max_up": MAX_UP,
+            "timeleft": tleft(),
+            "users": list(users.values()),
+            "viewers": bus.viewers,
         }
         yield f"event: fullstate\ndata: {json.dumps(init)}\n\n"
         try:
@@ -563,650 +547,519 @@ HTML = r"""<!DOCTYPE html>
 <title>Colloquium — AI Research Roundtable</title>
 <style>
 :root{
-  --bg:#0a0e14;--panel:#131921;--card:#1a2030;--brd:#252d3a;
-  --tx:#d4dae4;--tx2:#6b7a8d;--acc:#00e5a0;--acc2:#00b8d4;
-  --warn:#ff6b6b;--hi:#1e3a5f;
+  --bg:#0a0e14;--pnl:#111820;--card:#161d28;--brd:#1e2a38;
+  --tx:#cdd6e2;--tx2:#5a6d82;--acc:#00e5a0;--acc2:#00b8d4;
+  --warn:#ff6b6b;--hi:#14293f;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;overflow:hidden}
 body{
-  font-family:'SF Mono','Fira Code','Cascadia Code',Consolas,monospace;
+  font-family:'SF Mono','Fira Code',Consolas,'Courier New',monospace;
   background:var(--bg);color:var(--tx);display:flex;justify-content:center;
 }
-
-/* overlay */
 .overlay{
-  position:fixed;inset:0;background:rgba(0,0,0,.9);
+  position:fixed;inset:0;background:rgba(0,0,0,.92);
   display:flex;align-items:center;justify-content:center;
   z-index:100;backdrop-filter:blur(12px);
 }
 .overlay.hidden{display:none}
-.join-card{
-  background:var(--panel);border:1px solid var(--brd);
-  border-radius:12px;padding:2rem 1.6rem;width:90%;max-width:380px;text-align:center;
+.jc{
+  background:var(--pnl);border:1px solid var(--brd);
+  border-radius:12px;padding:2rem 1.6rem;
+  width:92%;max-width:400px;text-align:center;
 }
-.join-card h1{font-size:1.4rem;margin-bottom:.2rem}
-.join-card .acc{color:var(--acc)}
-.join-card .sub{color:var(--tx2);font-size:.72rem;margin-bottom:1.2rem;line-height:1.5}
-.join-card input{
+.jc h1{font-size:1.4rem;margin-bottom:.2rem;font-weight:700}
+.jc .ac{color:var(--acc)}
+.jc .sub{color:var(--tx2);font-size:.7rem;margin-bottom:1.2rem;line-height:1.6}
+.jc input{
   width:100%;padding:.7rem .9rem;background:var(--bg);
   border:1px solid var(--brd);border-radius:6px;
-  color:var(--tx);font-size:.85rem;font-family:inherit;
-  outline:none;margin-bottom:.7rem;
+  color:var(--tx);font-size:.82rem;font-family:inherit;
+  outline:none;margin-bottom:.6rem;
 }
-.join-card input:focus{border-color:var(--acc)}
-.join-card input::placeholder{color:var(--tx2)}
+.jc input:focus{border-color:var(--acc)}
+.jc input::placeholder{color:var(--tx2)}
 .btn{
   width:100%;padding:.7rem;border:none;border-radius:6px;
-  font-size:.8rem;font-weight:600;cursor:pointer;
-  font-family:inherit;margin-bottom:.4rem;
+  font-size:.78rem;font-weight:600;cursor:pointer;
+  font-family:inherit;margin-bottom:.35rem;
 }
 .btn:hover{opacity:.85}
 .btn-go{background:var(--acc);color:#000}
 .btn-w{background:transparent;color:var(--tx2);border:1px solid var(--brd)}
-.join-card .ht{color:var(--tx2);font-size:.6rem;margin-top:.8rem;line-height:1.6}
-
-/* app */
+.jc .ht{color:var(--tx2);font-size:.58rem;margin-top:.8rem;line-height:1.7}
 .app{
-  width:100%;max-width:560px;height:100vh;height:100dvh;
-  display:flex;flex-direction:column;background:var(--bg);
-  position:relative;
+  width:100%;max-width:580px;height:100vh;height:100dvh;
+  display:flex;flex-direction:column;background:var(--bg);position:relative;
 }
-
-/* header */
 .hdr{
-  display:flex;align-items:center;gap:.6rem;
-  padding:.55rem .8rem;background:var(--panel);
-  border-bottom:1px solid var(--brd);min-height:54px;z-index:10;
+  display:flex;align-items:center;gap:.5rem;
+  padding:.5rem .7rem;background:var(--pnl);
+  border-bottom:1px solid var(--brd);min-height:52px;z-index:10;
 }
-.hdr-ico{font-size:1.3rem}
+.hdr-ico{font-size:1.2rem}
 .hdr-info{flex:1;min-width:0}
-.hdr-name{font-size:.85rem;font-weight:700;letter-spacing:.03em}
-.hdr-sub{font-size:.65rem;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.hdr-sub .typing{color:var(--acc)}
-.hdr-badges{display:flex;gap:.25rem}
-.badge{
-  padding:.15rem .45rem;border-radius:4px;font-weight:600;
-  font-size:.58rem;font-family:inherit;letter-spacing:.02em;
-}
+.hdr-name{font-size:.82rem;font-weight:700;letter-spacing:.03em}
+.hdr-sub{font-size:.62rem;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hdr-sub .typ{color:var(--acc)}
+.hdr-badges{display:flex;gap:.2rem}
+.bdg{padding:.12rem .4rem;border-radius:3px;font-weight:600;font-size:.56rem;letter-spacing:.02em}
 .b-eye{background:rgba(0,184,212,.1);color:var(--acc2)}
 .b-msg{background:rgba(0,229,160,.1);color:var(--acc)}
 .b-die{background:rgba(255,107,107,.1);color:var(--warn)}
-
-/* agents strip */
-.agents-strip{
-  display:flex;gap:.25rem;padding:.35rem .6rem;
+.b-ppr{background:rgba(255,152,0,.1);color:#ff9800}
+.pbar{
+  display:flex;gap:2px;padding:.2rem .7rem;
   background:rgba(0,0,0,.2);border-bottom:1px solid var(--brd);
-  overflow-x:auto;font-size:.62rem;
 }
-.agents-strip::-webkit-scrollbar{display:none}
-.ag-chip{
+.pbar .seg{flex:1;height:3px;border-radius:2px;background:var(--brd);transition:background .3s}
+.pbar .seg.done{background:var(--acc)}
+.pbar .seg.on{background:var(--acc);animation:pls 1.5s ease infinite}
+@keyframes pls{0%,100%{opacity:1}50%{opacity:.35}}
+.astrip{
+  display:flex;gap:.2rem;padding:.3rem .6rem;
+  background:rgba(0,0,0,.15);border-bottom:1px solid var(--brd);
+  overflow-x:auto;font-size:.6rem;
+}
+.astrip::-webkit-scrollbar{display:none}
+.ach{
   display:flex;align-items:center;gap:.2rem;
-  padding:.15rem .45rem;border-radius:4px;
+  padding:.12rem .4rem;border-radius:3px;
   background:rgba(255,255,255,.03);border:1px solid var(--brd);
   white-space:nowrap;flex-shrink:0;
 }
-.ag-chip .dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
-.ag-chip .role{color:var(--tx2);font-size:.52rem}
-
-/* chat */
-.chat{
-  flex:1;overflow-y:auto;overflow-x:hidden;
-  padding:.5rem .6rem;
-}
+.ach .dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.ach .rl{color:var(--tx2);font-size:.48rem}
+.chat{flex:1;overflow-y:auto;overflow-x:hidden;padding:.5rem .6rem}
 .chat::-webkit-scrollbar{width:3px}
 .chat::-webkit-scrollbar-thumb{background:var(--brd);border-radius:3px}
-
-/* system pills */
 .sys{text-align:center;margin:.6rem 0}
 .pill{
   display:inline-block;background:var(--card);color:var(--tx2);
-  padding:.3rem .7rem;border-radius:4px;font-size:.68rem;
-  max-width:92%;line-height:1.5;border:1px solid var(--brd);
+  padding:.3rem .7rem;border-radius:4px;font-size:.66rem;
+  max-width:94%;line-height:1.5;border:1px solid var(--brd);
 }
-.pill.phase{
-  color:var(--acc);font-weight:600;font-size:.72rem;
-  border-color:rgba(0,229,160,.2);background:rgba(0,229,160,.05);
+.pill.ph{
+  color:var(--acc);font-weight:600;font-size:.7rem;
+  border-color:rgba(0,229,160,.2);background:rgba(0,229,160,.04);
   text-align:left;
 }
-.pill.phase .ph-desc{color:var(--tx2);font-weight:400;font-size:.62rem;margin-top:2px}
-
-/* paper card */
-.paper-card{
+.pill.ph .pd{color:var(--tx2);font-weight:400;font-size:.58rem;margin-top:2px}
+.pc{
   background:var(--card);border:1px solid var(--brd);
   border-radius:8px;padding:.7rem .8rem;margin:.6rem 0;
-  font-size:.72rem;line-height:1.5;
+  font-size:.7rem;line-height:1.5;
 }
-.paper-card .p-num{color:var(--acc);font-weight:700;font-size:.6rem;letter-spacing:.05em;margin-bottom:.3rem}
-.paper-card .p-title{color:var(--tx);font-weight:600;font-size:.8rem;margin-bottom:.3rem;line-height:1.4}
-.paper-card .p-authors{color:var(--acc2);font-size:.62rem;margin-bottom:.4rem}
-.paper-card .p-abstract{color:var(--tx2);font-size:.65rem;line-height:1.6;max-height:80px;overflow:hidden;transition:max-height .3s}
-.paper-card .p-abstract.open{max-height:none}
-.paper-card .p-toggle{
-  color:var(--acc);font-size:.6rem;cursor:pointer;margin-top:.3rem;
-  display:inline-block;
-}
-.paper-card .p-toggle:hover{text-decoration:underline}
-.paper-card .p-cats{display:flex;gap:.2rem;margin-top:.4rem;flex-wrap:wrap}
-.paper-card .p-cat{
-  padding:.1rem .35rem;border-radius:3px;font-size:.55rem;
-  background:rgba(0,184,212,.08);color:var(--acc2);border:1px solid rgba(0,184,212,.15);
-}
-.paper-card .p-link{
-  display:inline-block;margin-top:.4rem;font-size:.58rem;
-  color:var(--acc);text-decoration:none;
-}
-.paper-card .p-link:hover{text-decoration:underline}
-/* message bubbles */
+.pc .pn{color:var(--acc);font-weight:700;font-size:.58rem;letter-spacing:.05em;margin-bottom:.3rem}
+.pc .pt{color:var(--tx);font-weight:600;font-size:.78rem;margin-bottom:.3rem;line-height:1.4}
+.pc .pa{color:var(--acc2);font-size:.6rem;margin-bottom:.4rem}
+.pc .pabs{color:var(--tx2);font-size:.62rem;line-height:1.6;max-height:72px;overflow:hidden;transition:max-height .3s}
+.pc .pabs.open{max-height:600px}
+.pc .ptog{color:var(--acc);font-size:.58rem;cursor:pointer;margin-top:.3rem;display:inline-block}
+.pc .ptog:hover{text-decoration:underline}
+.pc .pcats{display:flex;gap:.2rem;margin-top:.4rem;flex-wrap:wrap}
+.pc .pcat{padding:.08rem .3rem;border-radius:2px;font-size:.52rem;background:rgba(0,184,212,.08);color:var(--acc2);border:1px solid rgba(0,184,212,.12)}
+.pc .plnk{display:inline-block;margin-top:.4rem;font-size:.56rem;color:var(--acc);text-decoration:none}
+.pc .plnk:hover{text-decoration:underline}
 .msg{display:flex;flex-direction:column;margin-bottom:2px;animation:up .2s ease}
 @keyframes up{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-.msg.ai{align-items:flex-start;padding-right:2rem}
-.msg.usr{align-items:flex-end;padding-left:2rem}
+.msg.ai{align-items:flex-start;padding-right:2.5rem}
+.msg.usr{align-items:flex-end;padding-left:2.5rem}
 .msg .body{
-  position:relative;padding:.4rem .6rem .2rem .6rem;
-  border-radius:6px;max-width:100%;font-size:.78rem;
+  position:relative;padding:.4rem .6rem .25rem;
+  border-radius:6px;max-width:100%;font-size:.76rem;
   line-height:1.45;word-wrap:break-word;
 }
 .msg.ai .body{background:var(--card);border:1px solid var(--brd);border-top-left-radius:0}
-.msg.usr .body{background:var(--hi);border:1px solid rgba(30,58,95,.5);border-top-right-radius:0}
+.msg.usr .body{background:var(--hi);border:1px solid rgba(20,41,63,.6);border-top-right-radius:0}
 .msg.cont .body{border-radius:6px}
 .msg.cont{margin-top:1px}
-.msg .who{font-size:.68rem;font-weight:600;margin-bottom:2px;display:flex;align-items:center;gap:.3rem}
-.msg .who .rl{font-size:.55rem;font-weight:400;color:var(--tx2)}
+.msg .who{font-size:.66rem;font-weight:600;margin-bottom:2px;display:flex;align-items:center;gap:.3rem}
+.msg .who .rl{font-size:.52rem;font-weight:400;color:var(--tx2)}
 .msg .txt{color:var(--tx)}
 .msg .meta{
   float:right;display:flex;align-items:center;gap:3px;
-  margin-left:8px;margin-top:3px;font-size:.55rem;
-  color:rgba(255,255,255,.3);white-space:nowrap;
+  margin-left:8px;margin-top:3px;font-size:.52rem;
+  color:rgba(255,255,255,.25);white-space:nowrap;
 }
-.msg .spacer{display:inline-block;width:3.8rem;height:1px}
-
+.msg .spacer{display:inline-block;width:3.5rem;height:1px}
 .cursor{
-  display:inline-block;width:2px;height:.85em;background:var(--acc);
-  margin-left:1px;animation:blinkcur .7s step-end infinite;vertical-align:text-bottom;
+  display:inline-block;width:2px;height:.82em;background:var(--acc);
+  margin-left:1px;animation:bk .7s step-end infinite;vertical-align:text-bottom;
 }
-@keyframes blinkcur{0%,100%{opacity:1}50%{opacity:0}}
-
-.typing-dots{display:inline-flex;gap:3px;align-items:center;padding:4px 0}
-.typing-dots span{
-  width:6px;height:6px;border-radius:50%;background:var(--tx2);
-  animation:dp 1.4s ease-in-out infinite;
-}
-.typing-dots span:nth-child(2){animation-delay:.2s}
-.typing-dots span:nth-child(3){animation-delay:.4s}
+@keyframes bk{0%,100%{opacity:1}50%{opacity:0}}
+.tdots{display:inline-flex;gap:3px;align-items:center;padding:4px 0}
+.tdots span{width:5px;height:5px;border-radius:50%;background:var(--tx2);animation:dp 1.4s ease-in-out infinite}
+.tdots span:nth-child(2){animation-delay:.2s}
+.tdots span:nth-child(3){animation-delay:.4s}
 @keyframes dp{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
-
-/* progress bar for phases */
-.phase-bar{
-  display:flex;gap:2px;padding:.25rem .6rem;
-  background:rgba(0,0,0,.15);border-bottom:1px solid var(--brd);
-}
-.phase-bar .pb-seg{
-  flex:1;height:3px;border-radius:2px;
-  background:var(--brd);transition:background .3s;
-}
-.phase-bar .pb-seg.done{background:var(--acc)}
-.phase-bar .pb-seg.active{background:var(--acc);animation:pulse 1.5s ease infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-
-/* input bar */
-.inputbar{
+.ibar{
   display:flex;align-items:center;gap:.4rem;
-  padding:.4rem .6rem;background:var(--panel);
-  border-top:1px solid var(--brd);min-height:50px;
+  padding:.4rem .6rem;background:var(--pnl);
+  border-top:1px solid var(--brd);min-height:48px;
 }
-.inputbar.off{opacity:.3;pointer-events:none}
-.inwrap{
+.ibar.off{opacity:.3;pointer-events:none}
+.iwrap{
   flex:1;display:flex;align-items:center;background:var(--bg);
   border:1px solid var(--brd);border-radius:6px;padding:.1rem .2rem .1rem .7rem;
 }
-.inwrap:focus-within{border-color:var(--acc)}
-.inwrap input{
+.iwrap:focus-within{border-color:var(--acc)}
+.iwrap input{
   flex:1;background:none;border:none;outline:none;
-  color:var(--tx);font-size:.8rem;padding:.5rem 0;font-family:inherit;
+  color:var(--tx);font-size:.78rem;padding:.5rem 0;font-family:inherit;
 }
-.inwrap input::placeholder{color:var(--tx2)}
-.sendbtn{
-  width:38px;height:38px;border-radius:6px;border:none;
-  background:var(--acc);color:#000;font-size:1rem;font-weight:700;
+.iwrap input::placeholder{color:var(--tx2)}
+.sbtn{
+  width:36px;height:36px;border-radius:6px;border:none;
+  background:var(--acc);color:#000;font-size:.95rem;font-weight:700;
   cursor:pointer;display:flex;align-items:center;
-  justify-content:center;flex-shrink:0;font-family:inherit;
+  justify-content:center;flex-shrink:0;
 }
-.sendbtn:hover{opacity:.85}
-.sendbtn:disabled{opacity:.2;cursor:default}
-
-/* watcher bar */
-.watchbar{
+.sbtn:hover{opacity:.85}
+.sbtn:disabled{opacity:.2;cursor:default}
+.wbar{
   display:flex;align-items:center;justify-content:center;
-  padding:.45rem .8rem;background:var(--panel);
-  border-top:1px solid var(--brd);min-height:44px;
-  font-size:.7rem;color:var(--tx2);gap:.4rem;
+  padding:.4rem .7rem;background:var(--pnl);
+  border-top:1px solid var(--brd);min-height:42px;
+  font-size:.68rem;color:var(--tx2);gap:.4rem;
 }
-.watchbar .live{color:var(--acc);font-weight:700}
-.watchbar .joinlink{
-  color:var(--acc);cursor:pointer;text-decoration:underline;margin-left:.5rem;
-}
-
-/* scroll btn */
-.scbtn{
-  display:none;position:absolute;bottom:64px;right:12px;
-  width:36px;height:36px;background:var(--panel);border:1px solid var(--brd);
+.wbar .live{color:var(--acc);font-weight:700}
+.wbar .jl{color:var(--acc);cursor:pointer;text-decoration:underline;margin-left:.5rem}
+.scb{
+  display:none;position:absolute;bottom:60px;right:12px;
+  width:34px;height:34px;background:var(--pnl);border:1px solid var(--brd);
   border-radius:6px;align-items:center;justify-content:center;
-  cursor:pointer;z-index:20;box-shadow:0 2px 12px rgba(0,0,0,.6);
-  font-size:.9rem;color:var(--tx2);
+  cursor:pointer;z-index:20;box-shadow:0 2px 10px rgba(0,0,0,.5);
+  font-size:.85rem;color:var(--tx2);
 }
-.scbtn:hover{background:var(--card)}
-.scbtn .ubadge{
+.scb:hover{background:var(--card)}
+.scb .ub{
   position:absolute;top:-4px;right:-4px;background:var(--acc);
-  color:#000;font-size:.52rem;font-weight:700;
-  min-width:16px;height:16px;border-radius:3px;
+  color:#000;font-size:.5rem;font-weight:700;
+  min-width:15px;height:15px;border-radius:3px;
   display:flex;align-items:center;justify-content:center;padding:0 3px;
 }
-
-/* shutdown */
-.shutdown{
-  text-align:center;padding:1.2rem .8rem;
-  background:rgba(255,107,107,.06);border:1px solid rgba(255,107,107,.15);
-  border-radius:6px;margin:.8rem 0;
+.sd{
+  text-align:center;padding:1rem .8rem;
+  background:rgba(255,107,107,.05);border:1px solid rgba(255,107,107,.12);
+  border-radius:6px;margin:.6rem 0;
 }
-.shutdown .big{color:var(--warn);font-size:.8rem;font-weight:700}
-.shutdown .sm{color:var(--tx2);font-size:.62rem;margin-top:.3rem}
-
-@media(max-width:560px){.app{max-width:100%}}
-@media(min-width:561px){body{align-items:center;padding:1rem 0}.app{border-radius:10px;height:96vh;overflow:hidden;border:1px solid var(--brd)}}
+.sd .big{color:var(--warn);font-size:.78rem;font-weight:700}
+.sd .sm{color:var(--tx2);font-size:.6rem;margin-top:.2rem}
+@media(max-width:580px){.app{max-width:100%}}
+@media(min-width:581px){body{align-items:center;padding:1rem 0}.app{border-radius:10px;height:96vh;overflow:hidden;border:1px solid var(--brd)}}
 </style>
 </head><body>
 
-<!-- JOIN SCREEN -->
-<div class="overlay" id="overlay">
-  <div class="join-card">
-    <h1>🔬 <span class="acc">Colloquium</span></h1>
+<div class="overlay" id="ov">
+  <div class="jc">
+    <h1>🔬 <span class="ac">Colloquium</span></h1>
     <div class="sub">
       Multi-agent AI research roundtable<br>
-      Five specialized AIs analyze live papers from arXiv<br>
-      Watch them think — or join the discussion
+      5 specialist AIs analyze real arXiv papers live<br>
+      15 papers per session · 5 phases each
     </div>
-    <input type="text" id="namein" placeholder="Your name..." maxlength="20"
-      onkeydown="if(event.key==='Enter')doJoin()">
-    <button class="btn btn-go" onclick="doJoin()">Join Roundtable</button>
-    <button class="btn btn-w" onclick="doWatch()">Just Observe</button>
+    <input type="text" id="nin" placeholder="Your name..." maxlength="20"
+      onkeydown="if(event.key==='Enter')doJ()">
+    <button class="btn btn-go" onclick="doJ()">Join Roundtable</button>
+    <button class="btn btn-w" onclick="doW()">Just Observe</button>
     <div class="ht">
       📐 Euler · ⚛️ Feynman · 🧠 Hinton · 🧩 Popper · 🔮 Tesla<br>
-      Five phases per paper: Summary → Critique → Cross-Exam → Proposals → Verdict
+      Summary → Critique → Cross-Exam → Proposals → Verdict
     </div>
   </div>
 </div>
 
-<!-- APP -->
 <div class="app" id="app" style="display:none">
   <div class="hdr">
     <div class="hdr-ico">🔬</div>
     <div class="hdr-info">
       <div class="hdr-name">Colloquium</div>
-      <div class="hdr-sub" id="hdrsub">connecting...</div>
+      <div class="hdr-sub" id="hsub">connecting...</div>
     </div>
     <div class="hdr-badges">
-      <div class="badge b-eye" id="beye">👁 0</div>
-      <div class="badge b-msg" id="bmsg">💬 0</div>
-      <div class="badge b-die" id="bdie">⏱ --</div>
+      <div class="bdg b-ppr" id="bppr">📄 0/15</div>
+      <div class="bdg b-eye" id="beye">👁 0</div>
+      <div class="bdg b-msg" id="bmsg">💬 0</div>
+      <div class="bdg b-die" id="bdie">⏱ --</div>
     </div>
   </div>
-
-  <div class="phase-bar" id="phasebar">
-    <div class="pb-seg" data-p="0"></div>
-    <div class="pb-seg" data-p="1"></div>
-    <div class="pb-seg" data-p="2"></div>
-    <div class="pb-seg" data-p="3"></div>
-    <div class="pb-seg" data-p="4"></div>
+  <div class="pbar" id="pbar">
+    <div class="seg" data-p="0"></div>
+    <div class="seg" data-p="1"></div>
+    <div class="seg" data-p="2"></div>
+    <div class="seg" data-p="3"></div>
+    <div class="seg" data-p="4"></div>
   </div>
-
-  <div class="agents-strip" id="agents"></div>
+  <div class="astrip" id="ags"></div>
   <div class="chat" id="chat"></div>
-
-  <div class="inputbar" id="inputbar" style="display:none">
-    <div class="inwrap">
-      <input type="text" id="msgin" placeholder="Ask a question or comment..." maxlength="500"
-        onkeydown="if(event.key==='Enter')doSend()">
+  <div class="ibar" id="ibar" style="display:none">
+    <div class="iwrap">
+      <input type="text" id="min" placeholder="Ask a question..." maxlength="500"
+        onkeydown="if(event.key==='Enter')doS()">
     </div>
-    <button class="sendbtn" onclick="doSend()">➤</button>
+    <button class="sbtn" onclick="doS()">➤</button>
   </div>
-
-  <div class="watchbar" id="watchbar">
+  <div class="wbar" id="wbar">
     <span class="live">● LIVE</span>
-    <span id="wtext">analysis in progress</span>
-    <span class="joinlink" onclick="showJoin()">join discussion</span>
+    <span id="wtxt">starting...</span>
+    <span class="jl" onclick="showJ()">join</span>
   </div>
-
-  <div class="scbtn" id="scbtn" onclick="jumpBottom()">
-    ↓<div class="ubadge" id="ubadge" style="display:none">0</div>
-  </div>
+  <div class="scb" id="scb" onclick="jmpB()">↓<div class="ub" id="ub" style="display:none">0</div></div>
 </div>
 
 <script>
 const $=id=>document.getElementById(id);
 const chat=$('chat');
-const PHASE_NAMES=['SUMMARY','CRITIQUE','CROSSFIRE','PROPOSAL','VERDICT'];
+const PN=['SUMMARY','CRITIQUE','CROSSFIRE','PROPOSAL','VERDICT'];
 
-let myId=null,myName=null,myColor=null,joined=false;
-let agents=[],bootTime=0,maxUp=0;
-let msgCount=0,lastWho='';
-let curBub=null,curTxt=null,typBub=null,timerIv=null;
-let curPhase=-1;
+let myId=null,myN=null,myC=null,joined=false;
+let agents=[],boot=0,maxU=0,mc=0,lw='',tIv=null,cPh=-1;
+let cBub=null,cTxt=null,tBub=null;
+let sUp=false,miss=0;
 
-// scroll
-let scrolledUp=false,missed=0;
-function scr(){if(!scrolledUp)chat.scrollTop=chat.scrollHeight}
-function jumpBottom(){
-  scrolledUp=false;missed=0;
-  chat.scrollTop=chat.scrollHeight;
-  $('scbtn').style.display='none';
-  $('ubadge').style.display='none';
-}
+function scr(){if(!sUp)chat.scrollTop=chat.scrollHeight}
+function jmpB(){sUp=false;miss=0;chat.scrollTop=chat.scrollHeight;$('scb').style.display='none';$('ub').style.display='none'}
 chat.addEventListener('scroll',()=>{
   const g=chat.scrollHeight-chat.scrollTop-chat.clientHeight;
-  const was=scrolledUp;scrolledUp=g>80;
-  if(!scrolledUp&&was){missed=0;$('ubadge').style.display='none'}
-  $('scbtn').style.display=scrolledUp?'flex':'none';
+  const w=sUp;sUp=g>80;
+  if(!sUp&&w){miss=0;$('ub').style.display='none'}
+  $('scb').style.display=sUp?'flex':'none';
 });
-function notif(){
-  if(scrolledUp){missed++;$('ubadge').textContent=missed;$('ubadge').style.display='flex'}
-}
+function ntf(){if(sUp){miss++;$('ub').textContent=miss;$('ub').style.display='flex'}}
 
-// join
-async function doJoin(){
-  const n=$('namein').value.trim();
-  if(!n)return $('namein').focus();
+async function doJ(){
+  const n=$('nin').value.trim();
+  if(!n)return $('nin').focus();
   try{
     const r=await fetch('/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:n})});
     const d=await r.json();
     if(d.error){alert(d.error);return}
-    myId=d.id;myName=d.name;myColor=d.color;joined=true;
-    $('overlay').classList.add('hidden');
-    $('app').style.display='flex';
-    $('inputbar').style.display='flex';
-    $('watchbar').style.display='none';
-    startSSE();
-    setTimeout(()=>$('msgin').focus(),300);
+    myId=d.id;myN=d.name;myC=d.color;joined=true;
+    $('ov').classList.add('hidden');$('app').style.display='flex';
+    $('ibar').style.display='flex';$('wbar').style.display='none';
+    sse();setTimeout(()=>$('min').focus(),300);
   }catch(e){alert('Connection failed')}
 }
-function doWatch(){
-  joined=false;
-  $('overlay').classList.add('hidden');
-  $('app').style.display='flex';
-  $('inputbar').style.display='none';
-  $('watchbar').style.display='flex';
-  startSSE();
+function doW(){
+  joined=false;$('ov').classList.add('hidden');$('app').style.display='flex';
+  $('ibar').style.display='none';$('wbar').style.display='flex';sse();
 }
-function showJoin(){
-  $('overlay').classList.remove('hidden');
-  $('namein').focus();
+function showJ(){$('ov').classList.remove('hidden');$('nin').focus()}
+
+async function doS(){
+  const inp=$('min'),t=inp.value.trim();
+  if(!t||!myId)return;inp.value='';inp.focus();
+  try{await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:myId,text:t})})}catch(e){}
 }
 
-// send
-async function doSend(){
-  const inp=$('msgin'),txt=inp.value.trim();
-  if(!txt||!myId)return;
-  inp.value='';inp.focus();
-  try{await fetch('/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:myId,text:txt})})}
-  catch(e){console.error(e)}
-}
-
-// helpers
 function fmt(s){
   s=Math.max(0,Math.floor(s));
   const h=Math.floor(s/3600),m=Math.floor(s%3600/60),sc=s%60;
   return h>0?h+'h '+String(m).padStart(2,'0')+'m':m+'m '+String(sc).padStart(2,'0')+'s';
 }
-function startTimer(){
-  if(timerIv)clearInterval(timerIv);
-  timerIv=setInterval(()=>{
-    const l=Math.max(0,maxUp-(Date.now()/1000-bootTime));
+function stmr(){
+  if(tIv)clearInterval(tIv);
+  tIv=setInterval(()=>{
+    const l=Math.max(0,maxU-(Date.now()/1000-boot));
     $('bdie').textContent='⏱ '+fmt(l);
     if(l<300)$('bdie').style.background='rgba(255,107,107,.25)';
-    if(l<=0){$('bdie').textContent='⏱ END';clearInterval(timerIv)}
+    if(l<=0){$('bdie').textContent='⏱ END';clearInterval(tIv)}
   },1000);
 }
-function setH(h){$('hdrsub').innerHTML=h}
-function setW(h){$('wtext').innerHTML=h}
+function sH(h){$('hsub').innerHTML=h}
+function sW(h){$('wtxt').innerHTML=h}
 
-function updatePhaseBar(idx){
-  curPhase=idx;
-  document.querySelectorAll('.pb-seg').forEach((el,i)=>{
-    el.classList.remove('done','active');
+function uPB(idx){
+  cPh=idx;
+  document.querySelectorAll('.seg').forEach((el,i)=>{
+    el.classList.remove('done','on');
     if(i<idx)el.classList.add('done');
-    else if(i===idx)el.classList.add('active');
+    else if(i===idx)el.classList.add('on');
   });
 }
 
-function renderAgents(ul){
+function rAgs(ul){
   let h='';
-  agents.forEach(a=>{
-    h+=`<div class="ag-chip"><div class="dot" style="background:${a.color}"></div>${a.avatar} ${a.name} <span class="role">${a.role}</span></div>`;
-  });
+  agents.forEach(a=>{h+=`<div class="ach"><div class="dot" style="background:${a.color}"></div>${a.avatar} ${a.name} <span class="rl">${a.role}</span></div>`});
   (ul||[]).forEach(u=>{
-    const me=(myName&&u.name===myName)?' (you)':'';
-    h+=`<div class="ag-chip"><div class="dot" style="background:${u.color}"></div>${u.name}${me}</div>`;
+    const me=(myN&&u.name===myN)?' (you)':'';
+    h+=`<div class="ach"><div class="dot" style="background:${u.color}"></div>${u.name}${me}</div>`;
   });
-  $('agents').innerHTML=h;
+  $('ags').innerHTML=h;
 }
 
-// render helpers
-function sysPill(html,cls){
+function sPill(h,c){
   const d=document.createElement('div');d.className='sys';
-  d.innerHTML=`<span class="pill ${cls||''}">${html}</span>`;
-  chat.appendChild(d);scr();
+  d.innerHTML=`<span class="pill ${c||''}">${h}</span>`;chat.appendChild(d);scr();
 }
-function phasePill(p){
+function phPill(p){
   const d=document.createElement('div');d.className='sys';
-  d.innerHTML=`<span class="pill phase">${p.label}<div class="ph-desc">${p.desc}</div></span>`;
+  d.innerHTML=`<span class="pill ph">${p.label}<div class="pd">${p.desc}</div></span>`;
   chat.appendChild(d);scr();
 }
-function paperCard(p){
-  const id='abs'+Date.now();
-  const d=document.createElement('div');d.className='paper-card';
-  d.innerHTML=`
-    <div class="p-num">PAPER #${p.number} · ${p.time}</div>
-    <div class="p-title">${p.title}</div>
-    <div class="p-authors">${p.authors}</div>
-    <div class="p-abstract" id="${id}">${p.abstract}</div>
-    <span class="p-toggle" onclick="
-      var el=document.getElementById('${id}');
-      if(el.classList.contains('open')){el.classList.remove('open');this.textContent='show more ▾'}
-      else{el.classList.add('open');this.textContent='show less ▴'}
-    ">show more ▾</span>
-    <div class="p-cats">${(p.categories||[]).map(c=>'<span class="p-cat">'+c+'</span>').join('')}</div>
-    ${p.link?'<a class="p-link" href="'+p.link+'" target="_blank" rel="noopener">→ view on arXiv</a>':''}
-  `;
+function pCard(p){
+  const id='a'+Date.now();
+  const d=document.createElement('div');d.className='pc';
+  d.innerHTML=`<div class="pn">PAPER #${p.number}${p.total?' / '+p.total:''} · ${p.time}</div>`+
+    `<div class="pt">${p.title}</div>`+
+    `<div class="pa">${p.authors}</div>`+
+    `<div class="pabs" id="${id}">${p.abstract}</div>`+
+    `<span class="ptog" onclick="var e=document.getElementById('${id}');if(e.classList.contains('open')){e.classList.remove('open');this.textContent='show more ▾'}else{e.classList.add('open');this.textContent='show less ▴'}">show more ▾</span>`+
+    `<div class="pcats">${(p.categories||[]).map(c=>'<span class="pcat">'+c+'</span>').join('')}</div>`+
+    (p.link?`<a class="plnk" href="${p.link}" target="_blank" rel="noopener">→ arXiv</a>`:'');
   chat.appendChild(d);scr();
 }
 
-function rmTyp(){if(typBub){typBub.remove();typBub=null}}
-function addTyp(name,ava,col,role){
-  rmTyp();
-  const co=(lastWho===name);
-  const d=document.createElement('div');
-  d.className=`msg ai${co?' cont':''}`;
+function rmT(){if(tBub){tBub.remove();tBub=null}}
+function addT(n,av,cl,rl){
+  rmT();const co=(lw===n);
+  const d=document.createElement('div');d.className=`msg ai${co?' cont':''}`;
   let h='';
-  if(!co)h+=`<div class="who" style="color:${col}">${ava} ${name} <span class="rl">${role}</span></div>`;
-  h+=`<div class="body"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
-  d.innerHTML=h;chat.appendChild(d);typBub=d;scr();
+  if(!co)h+=`<div class="who" style="color:${cl}">${av} ${n} <span class="rl">${rl}</span></div>`;
+  h+=`<div class="body"><div class="tdots"><span></span><span></span><span></span></div></div>`;
+  d.innerHTML=h;chat.appendChild(d);tBub=d;scr();
+}
+function sBub(sp,av,cl,rl,tm){
+  rmT();const co=(lw===sp);
+  const d=document.createElement('div');d.className=`msg ai${co?' cont':''}`;
+  let h='';
+  if(!co)h+=`<div class="who" style="color:${cl}">${av} ${sp} <span class="rl">${rl}</span></div>`;
+  h+=`<div class="body"><span class="meta"><span class="tm">${tm}</span></span><span class="txt"></span><span class="cursor"></span><span class="spacer"></span></div>`;
+  d.innerHTML=h;chat.appendChild(d);cBub=d;cTxt=d.querySelector('.txt');scr();
+}
+function addWd(w){if(!cTxt)return;const t=cTxt.textContent;cTxt.textContent=t?(t+' '+w):w;scr()}
+function fBub(sp,tm){
+  if(cBub){const c=cBub.querySelector('.cursor');if(c)c.remove();const m=cBub.querySelector('.meta');if(m)m.innerHTML=`<span class="tm">${tm}</span>`}
+  lw=sp;cBub=null;cTxt=null;mc++;$('bmsg').textContent='💬 '+mc;ntf();scr();
 }
 
-function startBub(sp,ava,col,role,tm){
-  rmTyp();
-  const co=(lastWho===sp);
-  const d=document.createElement('div');
-  d.className=`msg ai${co?' cont':''}`;
-  let h='';
-  if(!co)h+=`<div class="who" style="color:${col}">${ava} ${sp} <span class="rl">${role}</span></div>`;
-  h+=`<div class="body"><span class="meta"><span class="tm">${tm}</span></span>`;
-  h+=`<span class="txt"></span><span class="cursor"></span><span class="spacer"></span></div>`;
-  d.innerHTML=h;chat.appendChild(d);
-  curBub=d;curTxt=d.querySelector('.txt');scr();
-}
-function addW(w){
-  if(!curTxt)return;
-  const t=curTxt.textContent;
-  curTxt.textContent=t?(t+' '+w):w;scr();
-}
-function finBub(sp,tm){
-  if(curBub){
-    const c=curBub.querySelector('.cursor');if(c)c.remove();
-    const m=curBub.querySelector('.meta');
-    if(m)m.innerHTML=`<span class="tm">${tm}</span>`;
-  }
-  lastWho=sp;curBub=null;curTxt=null;
-  msgCount++;$('bmsg').textContent='💬 '+msgCount;
-  notif();scr();
-}
-
-function fullMsg(m){
-  const who=m.speaker||m.user_name;
-  const isU=(m.type==='user');
-  const co=(lastWho===who);
-  const d=document.createElement('div');
-  d.className=`msg ${isU?'usr':'ai'}${co?' cont':''}`;
-  const col=m.color||'#aaa',ava=m.avatar||'',role=m.role||'';
+function fMsg(m){
+  const w=m.speaker||m.user_name,isU=(m.type==='user'),co=(lw===w);
+  const d=document.createElement('div');d.className=`msg ${isU?'usr':'ai'}${co?' cont':''}`;
+  const cl=m.color||'#aaa',av=m.avatar||'',rl=m.role||'';
   let h='';
   if(!co){
-    if(isU) h+=`<div class="who" style="color:${col}">${who}</div>`;
-    else h+=`<div class="who" style="color:${col}">${ava} ${who} <span class="rl">${role}</span></div>`;
+    if(isU)h+=`<div class="who" style="color:${cl}">${w}</div>`;
+    else h+=`<div class="who" style="color:${cl}">${av} ${w} <span class="rl">${rl}</span></div>`;
   }
-  h+=`<div class="body"><span class="meta"><span class="tm">${m.time||''}</span></span>`;
-  h+=`<span class="txt">${m.text}</span><span class="spacer"></span></div>`;
-  d.innerHTML=h;chat.appendChild(d);
-  lastWho=who;if(!isU)msgCount++;
+  h+=`<div class="body"><span class="meta"><span class="tm">${m.time||''}</span></span><span class="txt">${m.text}</span><span class="spacer"></span></div>`;
+  d.innerHTML=h;chat.appendChild(d);lw=w;if(!isU)mc++;
 }
-
-function userBub(m){
-  const isMe=(myName&&m.user_name===myName);
-  const co=(lastWho===m.user_name);
-  const d=document.createElement('div');
-  d.className=`msg usr${co?' cont':''}`;
+function uBub(m){
+  const me=(myN&&m.user_name===myN),co=(lw===m.user_name);
+  const d=document.createElement('div');d.className=`msg usr${co?' cont':''}`;
   let h='';
-  if(!co)h+=`<div class="who" style="color:${m.color}">${m.user_name}${isMe?' (you)':''}</div>`;
-  h+=`<div class="body"><span class="meta"><span class="tm">${m.time||''}</span></span>`;
-  h+=`<span class="txt">${m.text}</span><span class="spacer"></span></div>`;
-  d.innerHTML=h;chat.appendChild(d);lastWho=m.user_name;scr();
+  if(!co)h+=`<div class="who" style="color:${m.color}">${m.user_name}${me?' (you)':''}</div>`;
+  h+=`<div class="body"><span class="meta"><span class="tm">${m.time||''}</span></span><span class="txt">${m.text}</span><span class="spacer"></span></div>`;
+  d.innerHTML=h;chat.appendChild(d);lw=m.user_name;scr();
 }
 
-// SSE
-function startSSE(){
-  setH('connecting...');
+function sse(){
+  sH('connecting...');
   const es=new EventSource('/stream');
 
   es.addEventListener('fullstate',e=>{
     const d=JSON.parse(e.data);
-    bootTime=d.boot;maxUp=d.max_up;
-    agents=d.agents||[];
-    renderAgents(d.users);
+    boot=d.boot;maxU=d.max_up;agents=d.agents||[];
+    rAgs(d.users);
     $('beye').textContent='👁 '+(d.viewers||0);
-    if(d.phase_idx>=0)updatePhaseBar(d.phase_idx);
-    setH(d.paper?d.paper.title.substring(0,50)+'...':'waiting for paper...');
-
-    chat.innerHTML='';msgCount=0;lastWho='';
-    sysPill('🔬 <b>Colloquium</b> — AI Research Roundtable','');
-
-    if(d.messages) d.messages.forEach(m=>{
-      if(m.type==='paper') paperCard(m);
-      else if(m.type==='phase') phasePill(m);
-      else if(m.type==='message') fullMsg(m);
-      else if(m.type==='user') fullMsg(m);
-      else if(m.type==='system') sysPill(m.text,'');
+    $('bppr').textContent='📄 '+(d.paper_num||0)+'/'+(d.total_papers||15);
+    if(d.phase_idx>=0)uPB(d.phase_idx);
+    sH(d.paper?d.paper.title.substring(0,48)+'...':'waiting for papers...');
+    chat.innerHTML='';mc=0;lw='';
+    sPill('🔬 <b>Colloquium</b> — AI Research Roundtable · '+agents.length+' agents · '+(d.total_papers||15)+' papers','');
+    if(d.messages)d.messages.forEach(m=>{
+      if(m.type==='paper')pCard(m);
+      else if(m.type==='phase')phPill(m);
+      else if(m.type==='message')fMsg(m);
+      else if(m.type==='user')fMsg(m);
+      else if(m.type==='system')sPill(m.text,'');
     });
-    $('bmsg').textContent='💬 '+msgCount;
-    startTimer();scr();
-    setW('analysis in progress');
+    $('bmsg').textContent='💬 '+mc;stmr();scr();sW('analysis in progress');
   });
 
   es.addEventListener('newpaper',e=>{
-    const d=JSON.parse(e.data);
-    paperCard(d);
-    setH(d.title.substring(0,50)+'...');
-    updatePhaseBar(-1);
+    const d=JSON.parse(e.data);pCard(d);
+    sH(d.title.substring(0,48)+'...');uPB(-1);
+    $('bppr').textContent='📄 '+d.number+'/'+(d.total||15);
   });
-
   es.addEventListener('newphase',e=>{
-    const d=JSON.parse(e.data);
-    phasePill(d);
-    const idx=PHASE_NAMES.indexOf(d.name);
-    if(idx>=0)updatePhaseBar(idx);
+    const d=JSON.parse(e.data);phPill(d);
+    const i=PN.indexOf(d.name);if(i>=0)uPB(i);
   });
-
   es.addEventListener('typing',e=>{
-    const d=JSON.parse(e.data);
-    addTyp(d.name,d.avatar,d.color,d.role);
-    setH(`<span class="typing">${d.avatar} ${d.name} is thinking...</span>`);
-    setW(`${d.avatar} ${d.name} is analyzing...`);
+    const d=JSON.parse(e.data);addT(d.name,d.avatar,d.color,d.role);
+    sH(`<span class="typ">${d.avatar} ${d.name} thinking...</span>`);
+    sW(`${d.avatar} ${d.name} analyzing...`);
   });
-
   es.addEventListener('msgstart',e=>{
-    const d=JSON.parse(e.data);
-    startBub(d.speaker,d.avatar,d.color,d.role,d.time);
-    setH(`<span class="typing">${d.avatar} ${d.speaker} is writing...</span>`);
-    setW(`${d.avatar} ${d.speaker} is writing...`);
+    const d=JSON.parse(e.data);sBub(d.speaker,d.avatar,d.color,d.role,d.time);
+    sH(`<span class="typ">${d.avatar} ${d.speaker} writing...</span>`);
+    sW(`${d.avatar} ${d.speaker} writing...`);
   });
-
-  es.addEventListener('word',e=>{addW(JSON.parse(e.data).w)});
-
+  es.addEventListener('word',e=>{addWd(JSON.parse(e.data).w)});
   es.addEventListener('msgdone',e=>{
-    const d=JSON.parse(e.data);
-    finBub(d.speaker,d.time);
-    setH(document.querySelector('.paper-card .p-title')?.textContent?.substring(0,50)+'...'||'roundtable');
-    setW('analysis in progress');
+    const d=JSON.parse(e.data);fBub(d.speaker,d.time);
+    const t=document.querySelector('.pc:last-of-type .pt');
+    sH(t?t.textContent.substring(0,48)+'...':'roundtable');
+    sW('analysis in progress');
   });
-
-  es.addEventListener('usermsg',e=>{userBub(JSON.parse(e.data))});
-  es.addEventListener('system',e=>{sysPill(JSON.parse(e.data).text,'')});
-
+  es.addEventListener('usermsg',e=>{uBub(JSON.parse(e.data))});
+  es.addEventListener('system',e=>{sPill(JSON.parse(e.data).text,'')});
   es.addEventListener('presence',e=>{
-    const d=JSON.parse(e.data);
-    renderAgents(d.users);
+    const d=JSON.parse(e.data);rAgs(d.users);
     $('beye').textContent='👁 '+(d.viewers||0);
   });
-
-  es.addEventListener('waiting',e=>{
-    const d=JSON.parse(e.data);
-    let g=d.gap;
-    setW(`${d.avatar} <span style="color:${d.color}">${d.name}</span> in <span id="gcd">${g}s</span>`);
-    const iv=setInterval(()=>{
-      g--;const el=document.getElementById('gcd');
-      if(el)el.textContent=g+'s';
-      if(g<=0){clearInterval(iv);setW('next agent thinking...')}
+   es.addEventListener('waiting',e=>{
+    const d=JSON.parse(e.data);let g=d.gap;
+    sW(`${d.avatar} <span style="color:${d.color}">${d.name}</span> in <span id="gcd">${g}s</span>`);
+    const iv=setInterval(()=>{g--;const el=document.getElementById('gcd');if(el)el.textContent=g+'s';if(g<=0){clearInterval(iv);sW('next agent...')}
     },1000);
   });
-
   es.addEventListener('shutdown',e=>{
-    const d=JSON.parse(e.data);rmTyp();
-    const div=document.createElement('div');div.className='shutdown';
+    const d=JSON.parse(e.data);rmT();
+    const div=document.createElement('div');div.className='sd';
     div.innerHTML=`<div class="big">⏱ Session Complete</div>`+
       `<div class="sm">Next cycle starts on schedule</div>`+
-      `<div class="sm">${d.total_msgs} agent messages · ${d.user_msgs} human · ${d.total_papers} papers analyzed · ${d.users} humans joined</div>`;
+      `<div class="sm">${d.total_msgs} agent messages · ${d.user_msgs} human · ${d.total_papers} papers analyzed · ${d.users} participants</div>`;
     chat.appendChild(div);scr();
-    setH('session ended');setW('offline — next cycle on schedule');
+    sH('session ended');sW('offline — next cycle on schedule');
     $('bdie').textContent='⏱ END';
-    if(timerIv)clearInterval(timerIv);
-    if(joined){$('inputbar').classList.add('off');$('msgin').placeholder='Session ended'}
-    updatePhaseBar(5);
+    if(tIv)clearInterval(tIv);
+    if(joined){$('ibar').classList.add('off');$('min').placeholder='Session ended'}
+    uPB(5);
   });
-
   es.addEventListener('ping',e=>{
     const d=JSON.parse(e.data);
     $('beye').textContent='👁 '+(d.v||0);
   });
-
   es.onerror=()=>{
-    setH('reconnecting...');setW('reconnecting...');
-    es.close();setTimeout(startSSE,3000);
+    sH('reconnecting...');sW('reconnecting...');
+    es.close();setTimeout(sse,3000);
   };
 }
 
-$('namein').focus();
+$('nin').focus();
 </script>
 </body></html>"""
 
+if __name__ == "__main__":
+    print("=" * 55)
+    print("🔬 Colloquium — Multi-Agent AI Research Roundtable")
+    print(f"   model       : {MODEL}")
+    print(f"   backup      : {BACKUP}")
+    print(f"   agent gap   : {AGENT_GAP}s")
+    print(f"   papers      : {MAX_PAPERS}")
+    print(f"   phases      : {len(PHASES)} ({', '.join(p['name'] for p in PHASES)})")
+    print(f"   agents      : {', '.join(a['avatar']+' '+a['name'] for a in AGENTS)}")
+    print(f"   max uptime  : {MAX_UP//3600}h {MAX_UP%3600//60}m")
+    print("=" * 55)
+
+    threading.Thread(target=engine, daemon=True).start()
+    app.run(host="0.0.0.0", port=PORT, threaded=True)
+  
 
 
 
-
-
+  
