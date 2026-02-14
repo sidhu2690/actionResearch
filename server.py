@@ -1055,11 +1055,10 @@ if __name__ == "__main__":
     print(f"   agents      : {', '.join(a['avatar']+' '+a['name'] for a in AGENTS)}")
     print(f"   max uptime  : {MAX_UP//3600}h {MAX_UP%3600//60}m")
     print("=" * 55)
+    import sys
+    sys.stdout.flush()
 
     threading.Thread(target=engine, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, threaded=True)
-  
-
-
 
   
