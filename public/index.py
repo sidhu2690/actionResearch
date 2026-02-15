@@ -1,0 +1,1615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>VoxRoom</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📱</text></svg>">
+<style>
+/* ━━ RESET & BASE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --wa-dark:#111b21;
+  --wa-panel:#1f2c34;
+  --wa-header:#202c33;
+  --wa-green:#00a884;
+  --wa-green2:#025144;
+  --wa-light:#e9edef;
+  --wa-gray:#8696a0;
+  --wa-bubble-out:#005c4b;
+  --wa-bubble-in:#202c33;
+  --wa-hover:#2a3942;
+  --wa-border:#313d45;
+  --wa-input:#2a3942;
+  --wa-danger:#ef5350;
+  --wa-white:#e9edef;
+  --wa-chat-bg:#0b141a;
+  --wa-typing:#ffffff33;
+  --radius:8px;
+}
+html,body{
+  height:100%;width:100%;
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  background:var(--wa-dark);
+  color:var(--wa-light);
+  overflow:hidden;
+}
+button{
+  cursor:pointer;border:none;outline:none;
+  font-family:inherit;font-size:inherit;
+  transition:all .15s;
+}
+button:active{transform:scale(.95)}
+input{
+  font-family:inherit;font-size:inherit;
+  outline:none;border:none;
+}
+
+/* ━━ SCREENS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.screen{
+  display:none;
+  width:100%;height:100%;
+  flex-direction:column;
+}
+.screen.active{display:flex}
+
+/* ━━ WELCOME SCREEN ━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#welcomeScreen{
+  align-items:center;justify-content:center;
+  background:linear-gradient(135deg,#0b141a 0%,#1a2e35 50%,#0b141a 100%);
+  gap:16px;padding:24px;
+}
+.welcome-logo{
+  font-size:72px;margin-bottom:8px;
+  animation:pulse 2s infinite;
+}
+@keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.05)}}
+.welcome-title{
+  font-size:32px;font-weight:300;color:var(--wa-light);
+  letter-spacing:1px;
+}
+.welcome-sub{
+  font-size:14px;color:var(--wa-gray);text-align:center;
+  max-width:350px;line-height:1.5;margin-bottom:24px;
+}
+.welcome-card{
+  background:var(--wa-panel);
+  border-radius:12px;padding:28px 24px;
+  width:100%;max-width:400px;
+  box-shadow:0 8px 32px #0004;
+}
+.form-group{margin-bottom:18px}
+.form-group label{
+  display:block;font-size:12px;
+  color:var(--wa-green);font-weight:600;
+  text-transform:uppercase;letter-spacing:.8px;
+  margin-bottom:6px;
+}
+.form-group input{
+  width:100%;padding:12px 14px;
+  background:var(--wa-input);
+  border-radius:var(--radius);
+  color:var(--wa-light);font-size:15px;
+  border:1px solid transparent;
+  transition:border .2s;
+}
+.form-group input:focus{border-color:var(--wa-green)}
+.form-group input::placeholder{color:var(--wa-gray)}
+.btn-row{display:flex;gap:10px;margin-top:20px}
+.btn{
+  flex:1;padding:13px 20px;border-radius:var(--radius);
+  font-size:15px;font-weight:600;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+}
+.btn-primary{
+  background:var(--wa-green);color:#fff;
+}
+.btn-primary:hover{background:#00be96}
+.btn-secondary{
+  background:var(--wa-input);color:var(--wa-light);
+}
+.btn-secondary:hover{background:var(--wa-hover)}
+.divider{
+  display:flex;align-items:center;gap:12px;
+  margin:20px 0;color:var(--wa-gray);font-size:13px;
+}
+.divider::before,.divider::after{
+  content:'';flex:1;height:1px;background:var(--wa-border);
+}
+.error-msg{
+  color:var(--wa-danger);font-size:13px;
+  margin-top:8px;display:none;
+}
+.error-msg.show{display:block}
+
+/* ━━ CHAT SCREEN ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#chatScreen{background:var(--wa-dark)}
+
+/* Header */
+.chat-header{
+  display:flex;align-items:center;
+  padding:10px 16px;
+  background:var(--wa-header);
+  border-bottom:1px solid var(--wa-border);
+  min-height:60px;gap:12px;
+  z-index:10;
+}
+.chat-header-avatar{
+  width:40px;height:40px;border-radius:50%;
+  background:var(--wa-green);
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;font-weight:700;color:#fff;
+  flex-shrink:0;
+}
+.chat-header-info{flex:1;min-width:0}
+.chat-header-name{
+  font-size:16px;font-weight:500;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.chat-header-status{
+  font-size:12px;color:var(--wa-gray);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.header-actions{display:flex;gap:4px}
+.icon-btn{
+  width:40px;height:40px;border-radius:50%;
+  background:transparent;color:var(--wa-gray);
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;
+}
+.icon-btn:hover{background:var(--wa-hover)}
+.icon-btn.active{color:var(--wa-green)}
+.icon-btn.danger{color:var(--wa-danger)}
+
+/* Messages */
+.chat-messages{
+  flex:1;overflow-y:auto;
+  padding:12px 16px 12px 16px;
+  background:var(--wa-chat-bg);
+  background-image:
+    url("data:image/svg+xml,%3Csvg width='60' height='60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 5 L35 15 L30 12 L25 15 Z' fill='%23ffffff06'/%3E%3C/svg%3E");
+  display:flex;flex-direction:column;gap:2px;
+}
+
+/* Bubbles */
+.msg{
+  max-width:75%;padding:6px 10px 6px 10px;
+  border-radius:8px;position:relative;
+  line-height:1.4;word-wrap:break-word;
+  font-size:14.2px;
+  animation:fadeIn .2s;
+}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.msg-out{
+  align-self:flex-end;
+  background:var(--wa-bubble-out);
+  border-top-right-radius:2px;
+  margin-left:48px;
+}
+.msg-in{
+  align-self:flex-start;
+  background:var(--wa-bubble-in);
+  border-top-left-radius:2px;
+  margin-right:48px;
+}
+.msg-sender{
+  font-size:12.5px;font-weight:600;
+  margin-bottom:2px;
+}
+.msg-text{color:var(--wa-light)}
+.msg-time{
+  font-size:10.5px;color:var(--wa-gray);
+  text-align:right;margin-top:2px;
+}
+.msg-system{
+  align-self:center;
+  background:#0b141acc;
+  color:var(--wa-gray);
+  font-size:12px;padding:4px 12px;
+  border-radius:6px;
+  max-width:85%;text-align:center;
+  margin:4px 0;
+}
+.typing-indicator{
+  align-self:flex-start;
+  background:var(--wa-bubble-in);
+  border-radius:8px;padding:10px 14px;
+  display:none;
+}
+.typing-indicator.show{display:flex;gap:4px;align-items:center}
+.typing-dot{
+  width:7px;height:7px;border-radius:50%;
+  background:var(--wa-gray);
+  animation:typingBounce 1.2s infinite;
+}
+.typing-dot:nth-child(2){animation-delay:.2s}
+.typing-dot:nth-child(3){animation-delay:.4s}
+@keyframes typingBounce{
+  0%,60%,100%{transform:translateY(0)}
+  30%{transform:translateY(-6px)}
+}
+
+/* Input bar */
+.chat-input-bar{
+  display:flex;align-items:flex-end;
+  padding:8px 12px;gap:8px;
+  background:var(--wa-header);
+  border-top:1px solid var(--wa-border);
+}
+.chat-input-bar input{
+  flex:1;padding:10px 14px;
+  background:var(--wa-input);
+  border-radius:20px;
+  color:var(--wa-light);
+  font-size:15px;
+  min-width:0;
+}
+.chat-input-bar input::placeholder{color:var(--wa-gray)}
+.send-btn{
+  width:42px;height:42px;border-radius:50%;
+  background:var(--wa-green);color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;flex-shrink:0;
+}
+.send-btn:hover{background:#00be96}
+
+/* ━━ CALL OVERLAY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#callOverlay{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:linear-gradient(180deg,#0b141a 0%,#1a2e35 40%,#0b141a 100%);
+  z-index:100;display:none;
+  flex-direction:column;align-items:center;
+  justify-content:space-between;
+  padding:40px 24px 48px;
+}
+#callOverlay.active{display:flex}
+.call-status{
+  text-align:center;
+  animation:fadeIn .3s;
+}
+.call-avatar{
+  width:96px;height:96px;border-radius:50%;
+  background:var(--wa-green);
+  display:flex;align-items:center;justify-content:center;
+  font-size:40px;font-weight:700;color:#fff;
+  margin:0 auto 16px;
+  box-shadow:0 0 0 4px var(--wa-green2);
+}
+.call-avatar.ringing{
+  animation:ringPulse 1.5s infinite;
+}
+@keyframes ringPulse{
+  0%{box-shadow:0 0 0 4px var(--wa-green2)}
+  50%{box-shadow:0 0 0 16px #00a88400}
+  100%{box-shadow:0 0 0 4px var(--wa-green2)}
+}
+.call-name{font-size:24px;font-weight:500;margin-bottom:4px}
+.call-timer{font-size:14px;color:var(--wa-gray)}
+.call-quality{
+  font-size:12px;margin-top:8px;
+  padding:4px 12px;border-radius:12px;
+  display:inline-block;
+}
+.quality-good{background:#00a88433;color:#00a884}
+.quality-medium{background:#ff980033;color:#ff9800}
+.quality-poor{background:#ef535033;color:#ef5350}
+
+.call-peers{
+  display:flex;flex-wrap:wrap;gap:16px;
+  justify-content:center;
+}
+.call-peer{
+  text-align:center;
+  animation:fadeIn .3s;
+}
+.call-peer-avatar{
+  width:64px;height:64px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:28px;font-weight:700;color:#fff;
+  margin:0 auto 6px;
+}
+.call-peer-name{font-size:13px;color:var(--wa-gray)}
+
+.call-controls{
+  display:flex;gap:20px;align-items:center;
+}
+.call-btn{
+  width:56px;height:56px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:24px;color:#fff;
+}
+.call-btn-mute{background:var(--wa-hover)}
+.call-btn-mute.muted{background:var(--wa-danger)}
+.call-btn-end{background:var(--wa-danger);width:64px;height:64px;font-size:28px}
+.call-btn-speaker{background:var(--wa-hover)}
+.call-btn-speaker.active{background:var(--wa-green)}
+
+/* ━━ SETTINGS PANEL ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#settingsPanel{
+  position:fixed;top:0;right:-320px;
+  width:300px;height:100%;
+  background:var(--wa-panel);
+  z-index:50;transition:right .3s;
+  box-shadow:-4px 0 16px #0004;
+  display:flex;flex-direction:column;
+}
+#settingsPanel.open{right:0}
+.settings-header{
+  padding:16px;background:var(--wa-header);
+  display:flex;align-items:center;gap:12px;
+  border-bottom:1px solid var(--wa-border);
+}
+.settings-header h3{flex:1;font-size:16px;font-weight:500}
+.settings-body{flex:1;overflow-y:auto;padding:16px}
+.settings-section{margin-bottom:24px}
+.settings-section h4{
+  font-size:12px;color:var(--wa-green);
+  text-transform:uppercase;letter-spacing:.8px;
+  margin-bottom:12px;
+}
+.settings-row{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 0;border-bottom:1px solid var(--wa-border);
+}
+.settings-row label{font-size:14px;color:var(--wa-light)}
+.settings-row select,
+.settings-row input[type="range"]{
+  background:var(--wa-input);color:var(--wa-light);
+  border:1px solid var(--wa-border);border-radius:6px;
+  padding:6px 10px;font-size:14px;
+}
+.room-code-display{
+  text-align:center;padding:16px;
+  background:var(--wa-dark);border-radius:var(--radius);
+  margin-bottom:16px;
+}
+.room-code-display .code{
+  font-size:32px;font-weight:700;
+  letter-spacing:6px;color:var(--wa-green);
+  font-family:'Courier New',monospace;
+}
+.room-code-display .code-label{
+  font-size:12px;color:var(--wa-gray);margin-bottom:8px;
+}
+.copy-btn{
+  padding:8px 20px;border-radius:var(--radius);
+  background:var(--wa-green);color:#fff;
+  font-size:13px;font-weight:600;margin-top:10px;
+}
+.participants-list{display:flex;flex-direction:column;gap:8px}
+.participant{
+  display:flex;align-items:center;gap:10px;
+  padding:8px;border-radius:var(--radius);
+  background:var(--wa-dark);
+}
+.participant-avatar{
+  width:36px;height:36px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;font-weight:700;color:#fff;
+  flex-shrink:0;
+}
+.participant-info{flex:1;min-width:0}
+.participant-name{font-size:14px;font-weight:500}
+.participant-status{font-size:11px;color:var(--wa-gray)}
+.online-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--wa-green);flex-shrink:0;
+}
+.online-dot.offline{background:var(--wa-gray)}
+
+/* ━━ SETTINGS BACKDROP ━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.backdrop{
+  position:fixed;top:0;left:0;right:0;bottom:0;
+  background:#0008;z-index:49;
+  display:none;
+}
+.backdrop.show{display:block}
+
+/* ━━ RESPONSIVE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media(max-width:480px){
+  .welcome-card{padding:20px 16px}
+  .msg{max-width:85%}
+  #settingsPanel{width:100%;right:-100%}
+}
+
+/* ━━ SCROLLBAR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--wa-border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--wa-gray)}
+</style>
+</head>
+<body>
+
+<!-- ━━ WELCOME SCREEN ━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div id="welcomeScreen" class="screen active">
+  <div class="welcome-logo">📱</div>
+  <div class="welcome-title">VoxRoom</div>
+  <div class="welcome-sub">
+    Crystal-clear calls even on slow connections.<br>
+    Create a room or join with a code.
+  </div>
+
+  <div class="welcome-card">
+    <div class="form-group">
+      <label>Your Name</label>
+      <input type="text" id="inputName" placeholder="Enter your name" maxlength="30" autocomplete="off">
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btnCreate">
+        <span>📞</span> Create Room
+      </button>
+    </div>
+
+    <div class="divider">or join existing</div>
+
+    <div class="form-group">
+      <label>Room Code</label>
+      <input type="text" id="inputCode" placeholder="e.g. ABC123" maxlength="6"
+             style="text-transform:uppercase;letter-spacing:4px;text-align:center;font-size:20px;font-weight:700">
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="btnJoin">
+        <span>🔗</span> Join Room
+      </button>
+    </div>
+
+    <div class="error-msg" id="welcomeError"></div>
+  </div>
+</div>
+
+<!-- ━━ CHAT SCREEN ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div id="chatScreen" class="screen">
+  <!-- Header -->
+  <div class="chat-header">
+    <div class="chat-header-avatar" id="roomAvatar">V</div>
+    <div class="chat-header-info">
+      <div class="chat-header-name" id="roomName">VoxRoom</div>
+      <div class="chat-header-status" id="roomStatus">connecting...</div>
+    </div>
+    <div class="header-actions">
+      <button class="icon-btn" id="btnCall" title="Start Call">📞</button>
+      <button class="icon-btn" id="btnSettings" title="Room Info">⚙️</button>
+    </div>
+  </div>
+
+  <!-- Messages -->
+  <div class="chat-messages" id="chatMessages">
+    <div class="msg-system">🔒 Messages are not stored. Calls are peer-to-peer.</div>
+  </div>
+
+  <!-- Typing -->
+  <div class="typing-indicator" id="typingIndicator">
+    <div class="typing-dot"></div>
+    <div class="typing-dot"></div>
+    <div class="typing-dot"></div>
+  </div>
+
+  <!-- Input -->
+  <div class="chat-input-bar">
+    <input type="text" id="chatInput" placeholder="Type a message" autocomplete="off">
+    <button class="send-btn" id="btnSend">➤</button>
+  </div>
+</div>
+
+<!-- ━━ CALL OVERLAY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div id="callOverlay">
+  <div class="call-status">
+    <div class="call-avatar ringing" id="callAvatar">V</div>
+    <div class="call-name" id="callRoomName">VoxRoom</div>
+    <div class="call-timer" id="callTimer">Connecting...</div>
+    <div class="call-quality quality-good" id="callQuality">● Excellent</div>
+  </div>
+
+  <div class="call-peers" id="callPeers"></div>
+
+  <div class="call-controls">
+    <button class="call-btn call-btn-mute" id="btnMute" title="Mute">🎤</button>
+    <button class="call-btn call-btn-end" id="btnEndCall" title="End Call">📵</button>
+    <button class="call-btn call-btn-speaker" id="btnSpeaker" title="Speaker">🔊</button>
+  </div>
+</div>
+
+<!-- ━━ SETTINGS PANEL ━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div class="backdrop" id="backdrop"></div>
+<div id="settingsPanel">
+  <div class="settings-header">
+    <button class="icon-btn" id="btnCloseSettings">✕</button>
+    <h3>Room Info</h3>
+  </div>
+  <div class="settings-body">
+    <div class="room-code-display">
+      <div class="code-label">ROOM CODE</div>
+      <div class="code" id="displayCode">------</div>
+      <button class="copy-btn" id="btnCopyCode">📋 Copy Code</button>
+    </div>
+
+    <div class="settings-section">
+      <h4>Settings</h4>
+      <div class="settings-row">
+        <label>Max in Call</label>
+        <select id="selectMaxCall">
+          <option value="2">2 people</option>
+          <option value="3">3 people</option>
+          <option value="4">4 people</option>
+          <option value="5">5 people</option>
+          <option value="6">6 people</option>
+          <option value="8">8 people</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h4>Participants</h4>
+      <div class="participants-list" id="participantsList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ━━ AUDIO ELEMENTS ━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div id="audioContainer" style="display:none"></div>
+
+<!-- ━━ SOCKET.IO ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<script src="/socket.io/socket.io.js"></script>
+<script>
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  VoxRoom Client — Full Application
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+(function(){
+"use strict";
+
+// ━━ STATE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const S = {
+  socket: null,
+  userId: null,
+  userName: "",
+  roomCode: null,
+  roomData: null,
+  isCreator: false,
+  // Call
+  inCall: false,
+  muted: false,
+  speakerOn: false,
+  localStream: null,
+  peers: new Map(),       // peerId → { pc, stream, name, color }
+  callStart: null,
+  callTimerInterval: null,
+  // Network
+  netQuality: "good",
+  qualityInterval: null,
+  // Typing
+  typingTimeout: null,
+};
+
+// ━━ ICE SERVERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" },
+    { urls: "stun:stun2.l.google.com:19302" },
+    { urls: "stun:stun3.l.google.com:19302" },
+    { urls: "stun:stun4.l.google.com:19302" },
+    { urls: "stun:stun.stunprotocol.org:3478" },
+  ],
+  iceCandidatePoolSize: 10,
+};
+
+// ━━ LOW-BANDWIDTH AUDIO CONSTRAINTS ━━━━━━━━━━━
+function getAudioConstraints() {
+  return {
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      sampleRate: 16000,       // Low sample rate for bandwidth savings
+      channelCount: 1,         // Mono
+      latency: 0.01,
+    },
+    video: false,
+  };
+}
+
+// ━━ ELEMENTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const $ = (id) => document.getElementById(id);
+const el = {
+  welcomeScreen: $("welcomeScreen"),
+  chatScreen: $("chatScreen"),
+  callOverlay: $("callOverlay"),
+  settingsPanel: $("settingsPanel"),
+  backdrop: $("backdrop"),
+  inputName: $("inputName"),
+  inputCode: $("inputCode"),
+  btnCreate: $("btnCreate"),
+  btnJoin: $("btnJoin"),
+  welcomeError: $("welcomeError"),
+  roomAvatar: $("roomAvatar"),
+  roomName: $("roomName"),
+  roomStatus: $("roomStatus"),
+  btnCall: $("btnCall"),
+  btnSettings: $("btnSettings"),
+  chatMessages: $("chatMessages"),
+  typingIndicator: $("typingIndicator"),
+  chatInput: $("chatInput"),
+  btnSend: $("btnSend"),
+  callAvatar: $("callAvatar"),
+  callRoomName: $("callRoomName"),
+  callTimer: $("callTimer"),
+  callQuality: $("callQuality"),
+  callPeers: $("callPeers"),
+  btnMute: $("btnMute"),
+  btnEndCall: $("btnEndCall"),
+  btnSpeaker: $("btnSpeaker"),
+  btnCloseSettings: $("btnCloseSettings"),
+  displayCode: $("displayCode"),
+  btnCopyCode: $("btnCopyCode"),
+  selectMaxCall: $("selectMaxCall"),
+  participantsList: $("participantsList"),
+  audioContainer: $("audioContainer"),
+};
+
+// ━━ SCREEN MANAGEMENT ━━━━━━━━━━━━━━━━━━━━━━━━━
+function showScreen(name) {
+  document.querySelectorAll(".screen").forEach((s) => s.classList.remove("active"));
+  if (name === "welcome") el.welcomeScreen.classList.add("active");
+  else if (name === "chat") el.chatScreen.classList.add("active");
+}
+
+function showError(msg) {
+  el.welcomeError.textContent = msg;
+  el.welcomeError.classList.add("show");
+  setTimeout(() => el.welcomeError.classList.remove("show"), 4000);
+}
+
+// ━━ SOCKET CONNECTION ━━━━━━━━━━━━━━━━━━━━━━━━━
+function connectSocket() {
+  if (S.socket) return;
+
+  S.socket = io({
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 10000,
+    timeout: 20000,
+  });
+
+  S.socket.on("connect", () => {
+    console.log("🔌 Connected:", S.socket.id);
+    updateConnectionStatus("connected");
+  });
+
+  S.socket.on("disconnect", (reason) => {
+    console.log("🔌 Disconnected:", reason);
+    updateConnectionStatus("disconnected");
+  });
+
+  S.socket.on("reconnect", () => {
+    console.log("🔌 Reconnected");
+    updateConnectionStatus("connected");
+    // Re-join room if we were in one
+    if (S.roomCode && S.userName) {
+      S.socket.emit("room:join", { code: S.roomCode, userName: S.userName }, (res) => {
+        if (res.ok) {
+          S.userId = res.userId;
+        }
+      });
+    }
+  });
+
+  // ── ROOM EVENTS ────────────────────────────
+  S.socket.on("room:update", (data) => {
+    S.roomData = data;
+    updateRoomUI(data);
+  });
+
+  // ── CHAT EVENTS ────────────────────────────
+  S.socket.on("chat:message", (msg) => {
+    appendMessage(msg);
+  });
+
+  S.socket.on("chat:typing", ({ userId, name }) => {
+    if (userId !== S.userId) showTyping(name);
+  });
+
+  // ── CALL EVENTS ────────────────────────────
+  S.socket.on("call:peer-joined", async ({ peerId, peerName, peerColor, shouldOffer }) => {
+    console.log(`📞 Peer joined: ${peerName} (offer: ${shouldOffer})`);
+    await setupPeerConnection(peerId, peerName, peerColor, shouldOffer);
+  });
+
+  S.socket.on("call:peer-left", ({ peerId }) => {
+    console.log(`📵 Peer left: ${peerId}`);
+    closePeerConnection(peerId);
+    updateCallUI();
+  });
+
+  // ── WebRTC SIGNALING ───────────────────────
+  S.socket.on("rtc:offer", async ({ fromUserId, offer }) => {
+    const peer = S.peers.get(fromUserId);
+    if (!peer) return;
+    try {
+      await peer.pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peer.pc.createAnswer();
+      await peer.pc.setLocalDescription(answer);
+      S.socket.emit("rtc:answer", { targetUserId: fromUserId, answer });
+    } catch (e) {
+      console.error("RTC offer error:", e);
+    }
+  });
+
+  S.socket.on("rtc:answer", async ({ fromUserId, answer }) => {
+    const peer = S.peers.get(fromUserId);
+    if (!peer) return;
+    try {
+      await peer.pc.setRemoteDescription(new RTCSessionDescription(answer));
+    } catch (e) {
+      console.error("RTC answer error:", e);
+    }
+  });
+
+  S.socket.on("rtc:ice", async ({ fromUserId, candidate }) => {
+    const peer = S.peers.get(fromUserId);
+    if (!peer || !candidate) return;
+    try {
+      await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (e) {
+      console.error("ICE error:", e);
+    }
+  });
+
+  // ── NETWORK QUALITY ────────────────────────
+  S.socket.on("net:peer-quality", ({ peerId, quality }) => {
+    const peer = S.peers.get(peerId);
+    if (peer) {
+      peer.quality = quality;
+      adaptBitrate(peerId, quality);
+    }
+  });
+}
+
+function updateConnectionStatus(status) {
+  if (!S.roomData) return;
+  if (status === "connected") {
+    const online = S.roomData.participants?.filter((p) => p.online).length || 0;
+    el.roomStatus.textContent = `${online} online`;
+  } else {
+    el.roomStatus.textContent = "Reconnecting...";
+  }
+}
+
+// ━━ ROOM CREATION / JOINING ━━━━━━━━━━━━━━━━━━━
+function createRoom() {
+  const name = el.inputName.value.trim();
+  if (!name) { showError("Please enter your name"); return; }
+  if (name.length < 2) { showError("Name too short"); return; }
+
+  connectSocket();
+  S.userName = name;
+
+  el.btnCreate.disabled = true;
+  el.btnCreate.textContent = "Creating...";
+
+  S.socket.emit("room:create", { name: `${name}'s Room`, userName: name }, (res) => {
+    el.btnCreate.disabled = false;
+    el.btnCreate.innerHTML = "<span>📞</span> Create Room";
+
+    if (res.ok) {
+      S.userId = res.userId;
+      S.roomCode = res.code;
+      S.isCreator = true;
+      showScreen("chat");
+      el.roomName.textContent = res.room.name;
+      el.displayCode.textContent = res.code;
+      el.roomAvatar.textContent = res.room.name[0].toUpperCase();
+    } else {
+      showError(res.error || "Failed to create room");
+    }
+  });
+}
+
+function joinRoom() {
+  const name = el.inputName.value.trim();
+  const code = el.inputCode.value.trim().toUpperCase();
+
+  if (!name) { showError("Please enter your name"); return; }
+  if (name.length < 2) { showError("Name too short"); return; }
+  if (!code || code.length !== 6) { showError("Enter a valid 6-character room code"); return; }
+
+  connectSocket();
+  S.userName = name;
+
+  el.btnJoin.disabled = true;
+  el.btnJoin.textContent = "Joining...";
+
+  S.socket.emit("room:join", { code, userName: name }, (res) => {
+    el.btnJoin.disabled = false;
+    el.btnJoin.innerHTML = "<span>🔗</span> Join Room";
+
+    if (res.ok) {
+      S.userId = res.userId;
+      S.roomCode = res.code;
+      S.isCreator = false;
+      showScreen("chat");
+      el.roomName.textContent = res.room.name;
+      el.displayCode.textContent = res.code;
+      el.roomAvatar.textContent = res.room.name[0].toUpperCase();
+    } else {
+      showError(res.error || "Failed to join room");
+    }
+  });
+}
+
+// ━━ ROOM UI UPDATE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function updateRoomUI(data) {
+  if (!data) return;
+
+  const online = data.participants.filter((p) => p.online);
+  const inCall = data.participants.filter((p) => p.inCall);
+
+  el.roomStatus.textContent = online.length === 1
+    ? "1 participant"
+    : `${online.length} participants` + (inCall.length > 0 ? ` · ${inCall.length} in call` : "");
+
+  el.selectMaxCall.value = data.maxCall;
+
+  // Update participants list
+  el.participantsList.innerHTML = "";
+  for (const p of data.participants) {
+    const div = document.createElement("div");
+    div.className = "participant";
+    div.innerHTML = `
+      <div class="participant-avatar" style="background:${p.color}">${p.name[0].toUpperCase()}</div>
+      <div class="participant-info">
+        <div class="participant-name">${esc(p.name)}${p.id === data.creatorId ? ' 👑' : ''}</div>
+        <div class="participant-status">${p.inCall ? '🔊 In call' : p.online ? 'Online' : 'Offline'}</div>
+      </div>
+      <div class="online-dot ${p.online ? '' : 'offline'}"></div>
+    `;
+    el.participantsList.appendChild(div);
+  }
+
+  // Show/hide call button based on active call
+  if (data.callActive && !S.inCall) {
+    el.btnCall.textContent = "📞";
+    el.btnCall.title = `Join Call (${inCall.length}/${data.maxCall})`;
+  } else if (S.inCall) {
+    el.btnCall.textContent = "📵";
+    el.btnCall.title = "Leave Call";
+    el.btnCall.classList.add("active");
+  } else {
+    el.btnCall.textContent = "📞";
+    el.btnCall.title = "Start Call";
+    el.btnCall.classList.remove("active");
+  }
+}
+
+// ━━ CHAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function formatTime(ts) {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function appendMessage(msg) {
+  const container = el.chatMessages;
+
+  if (msg.type === "system") {
+    const div = document.createElement("div");
+    div.className = "msg-system";
+    div.textContent = msg.text;
+    container.appendChild(div);
+  } else {
+    const isMe = msg.userId === S.userId;
+    const div = document.createElement("div");
+    div.className = `msg ${isMe ? "msg-out" : "msg-in"}`;
+
+    let html = "";
+    if (!isMe) {
+      html += `<div class="msg-sender" style="color:${msg.userColor}">${esc(msg.userName)}</div>`;
+    }
+    html += `<div class="msg-text">${esc(msg.text)}</div>`;
+    html += `<div class="msg-time">${formatTime(msg.time)}</div>`;
+    div.innerHTML = html;
+    container.appendChild(div);
+  }
+
+  // Auto-scroll
+  container.scrollTop = container.scrollHeight;
+  hideTyping();
+}
+
+function sendMessage() {
+  const text = el.chatInput.value.trim();
+  if (!text || !S.socket) return;
+
+  S.socket.emit("chat:send", { text });
+  el.chatInput.value = "";
+}
+
+let typingTimer = null;
+function showTyping(name) {
+  el.typingIndicator.classList.add("show");
+  el.typingIndicator.title = `${name} is typing...`;
+  clearTimeout(typingTimer);
+  typingTimer = setTimeout(hideTyping, 3000);
+}
+
+function hideTyping() {
+  el.typingIndicator.classList.remove("show");
+}
+
+// ━━ WebRTC — PEER CONNECTION ━━━━━━━━━━━━━━━━━━
+async function setupPeerConnection(peerId, peerName, peerColor, shouldOffer) {
+  // Create peer connection
+  const pc = new RTCPeerConnection(ICE_SERVERS);
+
+  const peerData = {
+    pc,
+    name: peerName,
+    color: peerColor,
+    stream: null,
+    quality: "good",
+  };
+  S.peers.set(peerId, peerData);
+
+  // Add local tracks
+  if (S.localStream) {
+    for (const track of S.localStream.getTracks()) {
+      pc.addTrack(track, S.localStream);
+    }
+  }
+
+  // ── ICE candidates ────────────────────────
+  pc.onicecandidate = (event) => {
+    if (event.candidate) {
+      S.socket.emit("rtc:ice", {
+        targetUserId: peerId,
+        candidate: event.candidate,
+      });
+    }
+  };
+
+ // ── Remote stream ─────────────────────────
+  pc.ontrack = (event) => {
+    console.log(`🔊 Got remote track from ${peerName}`);
+    const stream = event.streams[0];
+    peerData.stream = stream;
+
+    // Create or reuse audio element for this peer
+    let audioEl = document.getElementById(`audio-${peerId}`);
+    if (!audioEl) {
+      audioEl = document.createElement("audio");
+      audioEl.id = `audio-${peerId}`;
+      audioEl.autoplay = true;
+      audioEl.playsInline = true;
+      el.audioContainer.appendChild(audioEl);
+    }
+    audioEl.srcObject = stream;
+
+    // Force play (handle autoplay restrictions)
+    audioEl.play().catch((e) => {
+      console.warn("Autoplay blocked, will retry:", e);
+      document.addEventListener("click", function retryPlay() {
+        audioEl.play().catch(() => {});
+        document.removeEventListener("click", retryPlay);
+      }, { once: true });
+    });
+
+    updateCallUI();
+  };
+
+  // ── Connection state monitoring ───────────
+  pc.onconnectionstatechange = () => {
+    console.log(`🔗 Peer ${peerName}: ${pc.connectionState}`);
+    switch (pc.connectionState) {
+      case "connected":
+        startQualityMonitor(peerId);
+        updateCallUI();
+        break;
+      case "disconnected":
+        handlePeerDisconnect(peerId);
+        break;
+      case "failed":
+        handlePeerFailed(peerId, peerName, peerColor);
+        break;
+      case "closed":
+        closePeerConnection(peerId);
+        updateCallUI();
+        break;
+    }
+  };
+
+  pc.oniceconnectionstatechange = () => {
+    console.log(`🧊 ICE ${peerName}: ${pc.iceConnectionState}`);
+    if (pc.iceConnectionState === "failed") {
+      console.log("🔄 ICE restart...");
+      pc.restartIce();
+    }
+  };
+
+  // ── Apply low-bandwidth SDP constraints ───
+  function applyBandwidthConstraints(sdp) {
+    // Prefer Opus codec with low bitrate
+    let modified = sdp;
+
+    // Set max audio bitrate to 24kbps for low bandwidth
+    if (S.netQuality === "poor") {
+      modified = modified.replace(
+        /a=fmtp:111 /g,
+        "a=fmtp:111 maxaveragebitrate=12000;stereo=0;sprop-stereo=0;usedtx=1;cbr=0;"
+      );
+      // Add bandwidth limit
+      modified = modified.replace(
+        /c=IN IP4 (.*)\r\n/g,
+        "c=IN IP4 \$1\r\nb=AS:16\r\n"
+      );
+    } else if (S.netQuality === "medium") {
+      modified = modified.replace(
+        /a=fmtp:111 /g,
+        "a=fmtp:111 maxaveragebitrate=24000;stereo=0;usedtx=1;"
+      );
+      modified = modified.replace(
+        /c=IN IP4 (.*)\r\n/g,
+        "c=IN IP4 \$1\r\nb=AS:32\r\n"
+      );
+    } else {
+      modified = modified.replace(
+        /a=fmtp:111 /g,
+        "a=fmtp:111 maxaveragebitrate=48000;stereo=0;usedtx=1;"
+      );
+    }
+    return modified;
+  }
+
+  // ── Create offer if we should ─────────────
+  if (shouldOffer) {
+    try {
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: false,
+        voiceActivityDetection: true,
+      });
+
+      // Apply bandwidth constraints to SDP
+      offer.sdp = applyBandwidthConstraints(offer.sdp);
+
+      await pc.setLocalDescription(offer);
+      S.socket.emit("rtc:offer", {
+        targetUserId: peerId,
+        offer: pc.localDescription,
+      });
+      console.log(`📤 Sent offer to ${peerName}`);
+    } catch (e) {
+      console.error("Create offer failed:", e);
+    }
+  }
+
+  updateCallUI();
+}
+
+// ━━ PEER DISCONNECT / RECONNECT ━━━━━━━━━━━━━━━
+function handlePeerDisconnect(peerId) {
+  const peer = S.peers.get(peerId);
+  if (!peer) return;
+
+  console.log(`⚠️ Peer disconnected: ${peer.name}, waiting for reconnect...`);
+
+  // Give it 10 seconds to reconnect before giving up
+  peer.disconnectTimer = setTimeout(() => {
+    const p = S.peers.get(peerId);
+    if (p && p.pc.connectionState !== "connected") {
+      console.log(`❌ Peer ${p.name} did not reconnect. Closing.`);
+      closePeerConnection(peerId);
+      updateCallUI();
+    }
+  }, 10000);
+}
+
+function handlePeerFailed(peerId, peerName, peerColor) {
+  console.log(`❌ Peer connection failed: ${peerName}. Attempting ICE restart.`);
+  const peer = S.peers.get(peerId);
+  if (!peer) return;
+
+  // Try ICE restart first
+  try {
+    peer.pc.restartIce();
+  } catch (e) {
+    console.error("ICE restart failed:", e);
+    // Full reconnect
+    closePeerConnection(peerId);
+    setTimeout(() => {
+      if (S.inCall) {
+        setupPeerConnection(peerId, peerName, peerColor, true);
+      }
+    }, 2000);
+  }
+}
+
+function closePeerConnection(peerId) {
+  const peer = S.peers.get(peerId);
+  if (!peer) return;
+
+  // Clear timers
+  if (peer.disconnectTimer) clearTimeout(peer.disconnectTimer);
+  if (peer.qualityInterval) clearInterval(peer.qualityInterval);
+
+  // Close connection
+  try { peer.pc.close(); } catch (e) {}
+
+  // Remove audio element
+  const audioEl = document.getElementById(`audio-${peerId}`);
+  if (audioEl) {
+    audioEl.srcObject = null;
+    audioEl.remove();
+  }
+
+  S.peers.delete(peerId);
+  console.log(`🗑️ Peer connection closed: ${peer.name}`);
+}
+
+// ━━ NETWORK QUALITY MONITORING ━━━━━━━━━━━━━━━━
+function startQualityMonitor(peerId) {
+  const peer = S.peers.get(peerId);
+  if (!peer) return;
+
+  // Clear existing
+  if (peer.qualityInterval) clearInterval(peer.qualityInterval);
+
+  peer.qualityInterval = setInterval(async () => {
+    if (!peer.pc || peer.pc.connectionState !== "connected") {
+      clearInterval(peer.qualityInterval);
+      return;
+    }
+
+    try {
+      const stats = await peer.pc.getStats();
+      let rtt = 0;
+      let packetsLost = 0;
+      let packetsReceived = 0;
+      let jitter = 0;
+
+      stats.forEach((report) => {
+        if (report.type === "candidate-pair" && report.state === "succeeded") {
+          rtt = report.currentRoundTripTime || 0;
+        }
+        if (report.type === "inbound-rtp" && report.kind === "audio") {
+          packetsLost = report.packetsLost || 0;
+          packetsReceived = report.packetsReceived || 0;
+          jitter = report.jitter || 0;
+        }
+      });
+
+      const lossRate = packetsReceived > 0 ? packetsLost / (packetsLost + packetsReceived) : 0;
+
+      let quality = "good";
+      if (rtt > 0.4 || lossRate > 0.1 || jitter > 0.05) {
+        quality = "poor";
+      } else if (rtt > 0.2 || lossRate > 0.03 || jitter > 0.02) {
+        quality = "medium";
+      }
+
+      // Update local quality state
+      const prevQuality = S.netQuality;
+      S.netQuality = quality;
+
+      // If quality changed, notify peers and adapt
+      if (prevQuality !== quality) {
+        console.log(`📊 Network quality: ${quality} (RTT: ${(rtt*1000).toFixed(0)}ms, loss: ${(lossRate*100).toFixed(1)}%, jitter: ${(jitter*1000).toFixed(0)}ms)`);
+        S.socket.emit("net:quality", { quality });
+        adaptLocalBitrate(quality);
+      }
+
+      updateQualityIndicator(quality, rtt, lossRate);
+
+    } catch (e) {
+      // Stats not available, ignore
+    }
+  }, 3000);
+}
+
+function adaptLocalBitrate(quality) {
+  for (const [peerId, peer] of S.peers) {
+    adaptBitrate(peerId, quality);
+  }
+}
+
+function adaptBitrate(peerId, quality) {
+  const peer = S.peers.get(peerId);
+  if (!peer || !peer.pc) return;
+
+  const senders = peer.pc.getSenders();
+  for (const sender of senders) {
+    if (sender.track && sender.track.kind === "audio") {
+      const params = sender.getParameters();
+      if (!params.encodings || params.encodings.length === 0) {
+        params.encodings = [{}];
+      }
+
+      switch (quality) {
+        case "poor":
+          params.encodings[0].maxBitrate = 12000;  // 12 kbps — intelligible voice
+          break;
+        case "medium":
+          params.encodings[0].maxBitrate = 24000;  // 24 kbps — decent quality
+          break;
+        default:
+          params.encodings[0].maxBitrate = 48000;  // 48 kbps — good quality
+          break;
+      }
+
+      sender.setParameters(params).catch((e) => {
+        console.warn("Bitrate adaptation failed:", e);
+      });
+    }
+  }
+}
+
+function updateQualityIndicator(quality, rtt, lossRate) {
+  const qEl = el.callQuality;
+  const rttMs = Math.round((rtt || 0) * 1000);
+  const lossPercent = ((lossRate || 0) * 100).toFixed(1);
+
+  switch (quality) {
+    case "good":
+      qEl.className = "call-quality quality-good";
+      qEl.textContent = `● Excellent ${rttMs}ms`;
+      break;
+    case "medium":
+      qEl.className = "call-quality quality-medium";
+      qEl.textContent = `● Fair ${rttMs}ms · ${lossPercent}% loss`;
+      break;
+    case "poor":
+      qEl.className = "call-quality quality-poor";
+      qEl.textContent = `● Poor ${rttMs}ms · ${lossPercent}% loss`;
+      break;
+  }
+}
+
+// ━━ CALL MANAGEMENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+async function joinCall() {
+  if (S.inCall) {
+    leaveCall();
+    return;
+  }
+
+  try {
+    // Get microphone with low-bandwidth optimized constraints
+    S.localStream = await navigator.mediaDevices.getUserMedia(getAudioConstraints());
+
+    console.log("🎤 Microphone acquired");
+
+    S.inCall = true;
+    S.callStart = Date.now();
+    S.muted = false;
+    S.speakerOn = false;
+
+    // Show call overlay
+    el.callOverlay.classList.add("active");
+    el.callAvatar.classList.add("ringing");
+    el.callRoomName.textContent = S.roomData?.name || "VoxRoom";
+    el.callTimer.textContent = "Connecting...";
+    el.btnMute.classList.remove("muted");
+    el.btnMute.textContent = "🎤";
+    el.btnSpeaker.classList.remove("active");
+
+    // Tell server we're joining
+    S.socket.emit("call:join", null, (res) => {
+      if (!res.ok) {
+        alert(res.error || "Cannot join call");
+        leaveCall();
+        return;
+      }
+      console.log(`📞 Joined call (${res.members} members)`);
+      el.callAvatar.classList.remove("ringing");
+      startCallTimer();
+    });
+
+  } catch (e) {
+    console.error("Microphone error:", e);
+    alert("Cannot access microphone. Please allow microphone permission and try again.");
+    S.inCall = false;
+  }
+}
+
+function leaveCall() {
+  console.log("📵 Leaving call");
+
+  S.inCall = false;
+
+  // Stop local stream
+  if (S.localStream) {
+    S.localStream.getTracks().forEach((t) => t.stop());
+    S.localStream = null;
+  }
+
+  // Close all peer connections
+  for (const [peerId] of S.peers) {
+    closePeerConnection(peerId);
+  }
+  S.peers.clear();
+
+  // Stop timer
+  if (S.callTimerInterval) {
+    clearInterval(S.callTimerInterval);
+    S.callTimerInterval = null;
+  }
+
+  // Hide call overlay
+  el.callOverlay.classList.remove("active");
+
+  // Tell server
+  S.socket.emit("call:leave");
+}
+
+function toggleMute() {
+  if (!S.localStream) return;
+  S.muted = !S.muted;
+
+  S.localStream.getAudioTracks().forEach((track) => {
+    track.enabled = !S.muted;
+  });
+
+  el.btnMute.textContent = S.muted ? "🔇" : "🎤";
+  el.btnMute.classList.toggle("muted", S.muted);
+
+  console.log(S.muted ? "🔇 Muted" : "🎤 Unmuted");
+}
+
+function toggleSpeaker() {
+  S.speakerOn = !S.speakerOn;
+  el.btnSpeaker.classList.toggle("active", S.speakerOn);
+
+  // Set all remote audio elements to use speaker or earpiece
+  const audioEls = el.audioContainer.querySelectorAll("audio");
+  audioEls.forEach((a) => {
+    if (a.setSinkId && S.speakerOn) {
+      // Try to switch to default (speaker) output
+      a.setSinkId("default").catch(() => {});
+    }
+  });
+
+  console.log(S.speakerOn ? "🔊 Speaker on" : "🔈 Speaker off");
+}
+
+function startCallTimer() {
+  if (S.callTimerInterval) clearInterval(S.callTimerInterval);
+
+  S.callTimerInterval = setInterval(() => {
+    if (!S.callStart) return;
+    const elapsed = Math.floor((Date.now() - S.callStart) / 1000);
+    const m = Math.floor(elapsed / 60).toString().padStart(2, "0");
+    const s = (elapsed % 60).toString().padStart(2, "0");
+    el.callTimer.textContent = `${m}:${s}`;
+  }, 1000);
+}
+
+function updateCallUI() {
+  el.callPeers.innerHTML = "";
+
+  for (const [peerId, peer] of S.peers) {
+    const div = document.createElement("div");
+    div.className = "call-peer";
+
+    const state = peer.pc.connectionState;
+    let statusIcon = "🔄";
+    if (state === "connected") statusIcon = "🔊";
+    else if (state === "disconnected") statusIcon = "⚠️";
+    else if (state === "failed") statusIcon = "❌";
+
+    div.innerHTML = `
+      <div class="call-peer-avatar" style="background:${peer.color || '#128C7E'}">${(peer.name || "?")[0].toUpperCase()}</div>
+      <div class="call-peer-name">${statusIcon} ${esc(peer.name || "Peer")}</div>
+    `;
+    el.callPeers.appendChild(div);
+  }
+
+  // If no peers in call, show waiting state
+  if (S.peers.size === 0 && S.inCall) {
+    el.callTimer.textContent = "Waiting for others...";
+    el.callAvatar.classList.add("ringing");
+  } else {
+    el.callAvatar.classList.remove("ringing");
+  }
+}
+
+// ━━ SETTINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function openSettings() {
+  el.settingsPanel.classList.add("open");
+  el.backdrop.classList.add("show");
+}
+
+function closeSettings() {
+  el.settingsPanel.classList.remove("open");
+  el.backdrop.classList.remove("show");
+}
+
+function copyRoomCode() {
+  const code = el.displayCode.textContent;
+  if (!code || code === "------") return;
+
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(code).then(() => {
+      el.btnCopyCode.textContent = "✅ Copied!";
+      setTimeout(() => { el.btnCopyCode.textContent = "📋 Copy Code"; }, 2000);
+    }).catch(() => {
+      fallbackCopy(code);
+    });
+  } else {
+    fallbackCopy(code);
+  }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.left = "-9999px";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    el.btnCopyCode.textContent = "✅ Copied!";
+    setTimeout(() => { el.btnCopyCode.textContent = "📋 Copy Code"; }, 2000);
+  } catch (e) {
+    el.btnCopyCode.textContent = "❌ Failed";
+    setTimeout(() => { el.btnCopyCode.textContent = "📋 Copy Code"; }, 2000);
+  }
+  document.body.removeChild(ta);
+}
+
+function changeMaxCall() {
+  const val = parseInt(el.selectMaxCall.value);
+  if (val >= 2 && val <= 8 && S.socket) {
+    S.socket.emit("room:settings", { maxCall: val });
+  }
+}
+
+// ━━ EVENT LISTENERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Welcome screen
+el.btnCreate.addEventListener("click", createRoom);
+el.btnJoin.addEventListener("click", joinRoom);
+
+el.inputName.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    if (el.inputCode.value.trim()) joinRoom();
+    else createRoom();
+  }
+});
+
+el.inputCode.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") joinRoom();
+});
+
+// Force uppercase on room code input
+el.inputCode.addEventListener("input", () => {
+  el.inputCode.value = el.inputCode.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+});
+
+// Chat
+el.btnSend.addEventListener("click", sendMessage);
+el.chatInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// Typing indicator
+el.chatInput.addEventListener("input", () => {
+  if (S.socket && S.roomCode) {
+    if (!S.typingTimeout) {
+      S.socket.emit("chat:typing");
+    }
+    clearTimeout(S.typingTimeout);
+    S.typingTimeout = setTimeout(() => {
+      S.typingTimeout = null;
+    }, 2000);
+  }
+});
+
+// Call controls
+el.btnCall.addEventListener("click", joinCall);
+el.btnMute.addEventListener("click", toggleMute);
+el.btnEndCall.addEventListener("click", leaveCall);
+el.btnSpeaker.addEventListener("click", toggleSpeaker);
+
+// Settings
+el.btnSettings.addEventListener("click", openSettings);
+el.btnCloseSettings.addEventListener("click", closeSettings);
+el.backdrop.addEventListener("click", closeSettings);
+el.btnCopyCode.addEventListener("click", copyRoomCode);
+el.selectMaxCall.addEventListener("change", changeMaxCall);
+
+// ━━ HANDLE PAGE VISIBILITY ━━━━━━━━━━━━━━━━━━━━
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    // Page is hidden — reduce quality to save battery
+    if (S.inCall) {
+      adaptLocalBitrate("poor");
+    }
+  } else {
+    // Page visible again — restore quality
+    if (S.inCall) {
+      adaptLocalBitrate(S.netQuality);
+    }
+  }
+});
+
+// ━━ HANDLE BEFORE UNLOAD ━━━━━━━━━━━━━━━━━━━━━━
+window.addEventListener("beforeunload", () => {
+  if (S.inCall) leaveCall();
+  if (S.socket) S.socket.disconnect();
+});
+
+// ━━ WAKE LOCK (keep screen on during calls) ━━━
+let wakeLock = null;
+
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    console.log("🔆 Wake lock active");
+    wakeLock.addEventListener("release", () => {
+      console.log("🔅 Wake lock released");
+    });
+  } catch (e) {
+    console.warn("Wake lock failed:", e);
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release();
+    wakeLock = null;
+  }
+}
+
+// Acquire wake lock when call starts, release when it ends
+const origJoinCall = joinCall;
+const origLeaveCall = leaveCall;
+
+// Watch for call state changes to manage wake lock
+const callObserver = setInterval(() => {
+  if (S.inCall && !wakeLock) {
+    requestWakeLock();
+  } else if (!S.inCall && wakeLock) {
+    releaseWakeLock();
+  }
+}, 2000);
+
+// ━━ RECONNECTION HANDLING FOR CALLS ━━━━━━━━━━━
+// If we get disconnected and reconnect, rejoin the call automatically
+let wasInCall = false;
+
+setInterval(() => {
+  if (S.socket && S.socket.connected) {
+    if (wasInCall && !S.inCall) {
+      // We were in a call but got disconnected — attempt to rejoin
+      console.log("🔄 Attempting to rejoin call after reconnect...");
+      joinCall();
+      wasInCall = false;
+    }
+  }
+  wasInCall = S.inCall;
+}, 5000);
+
+// ━━ INITIAL FOCUS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+el.inputName.focus();
+
+console.log("📱 VoxRoom loaded");
+
+})();
+</script>
+</body>
+</html>
+
+
+
