@@ -13,116 +13,63 @@ body{
   align-items:center;justify-content:center;
 }
 
-/* JOIN SCREEN */
-#joinScreen{
-  text-align:center;
-  padding:24px;
-  width:100%;max-width:360px;
-}
-#joinScreen h1{
-  font-size:48px;margin-bottom:4px;
-}
-#joinScreen p{
-  color:#888;font-size:14px;margin-bottom:32px;
-}
+#joinScreen{text-align:center;padding:24px;width:100%;max-width:360px}
+#joinScreen h1{font-size:48px;margin-bottom:4px}
+#joinScreen p{color:#888;font-size:14px;margin-bottom:32px}
 #codeInput{
-  width:100%;padding:16px;
-  font-size:28px;font-weight:700;
-  text-align:center;letter-spacing:8px;
-  text-transform:uppercase;
-  background:#1a1a1a;border:2px solid #333;
-  border-radius:12px;color:#fff;
-  outline:none;
+  width:100%;padding:16px;font-size:28px;font-weight:700;
+  text-align:center;letter-spacing:8px;text-transform:uppercase;
+  background:#1a1a1a;border:2px solid #333;border-radius:12px;
+  color:#fff;outline:none;
 }
 #codeInput:focus{border-color:#22c55e}
-#codeInput::placeholder{
-  color:#444;letter-spacing:4px;font-weight:400;font-size:16px;
-}
+#codeInput::placeholder{color:#444;letter-spacing:4px;font-weight:400;font-size:16px}
 #joinBtn{
-  width:100%;padding:16px;margin-top:16px;
-  font-size:18px;font-weight:600;
-  background:#22c55e;color:#fff;
-  border:none;border-radius:12px;cursor:pointer;
+  width:100%;padding:16px;margin-top:16px;font-size:18px;font-weight:600;
+  background:#22c55e;color:#fff;border:none;border-radius:12px;cursor:pointer;
 }
 #joinBtn:hover{background:#16a34a}
 #joinBtn:active{transform:scale(.98)}
 #joinBtn:disabled{background:#333;color:#666;cursor:default}
-#error{
-  color:#ef4444;font-size:13px;
-  margin-top:12px;min-height:20px;
-}
+#error{color:#ef4444;font-size:13px;margin-top:12px;min-height:20px}
 
-/* CALL SCREEN */
 #callScreen{
-  display:none;
-  text-align:center;
-  padding:24px;
-  width:100%;height:100vh;
-  flex-direction:column;
-  align-items:center;
-  justify-content:space-between;
+  display:none;text-align:center;padding:24px;width:100%;height:100vh;
+  flex-direction:column;align-items:center;justify-content:space-between;
   padding:60px 24px 80px;
 }
 #callScreen.active{display:flex}
 #joinScreen.hidden{display:none}
 
-.room-label{
-  font-size:14px;color:#888;
-  margin-bottom:4px;
-}
-.room-code{
-  font-size:20px;font-weight:700;
-  letter-spacing:4px;color:#22c55e;
-  font-family:'Courier New',monospace;
-}
+.room-label{font-size:14px;color:#888;margin-bottom:4px}
+.room-code{font-size:20px;font-weight:700;letter-spacing:4px;color:#22c55e;font-family:'Courier New',monospace}
 
 .call-circle{
-  width:140px;height:140px;
-  border-radius:50%;
-  background:#1a1a1a;
-  border:3px solid #333;
-  display:flex;align-items:center;
-  justify-content:center;
-  font-size:56px;
-  margin:0 auto;
-  transition:all .3s;
+  width:140px;height:140px;border-radius:50%;background:#1a1a1a;
+  border:3px solid #333;display:flex;align-items:center;justify-content:center;
+  font-size:56px;margin:0 auto;transition:all .3s;
 }
-.call-circle.connected{
-  border-color:#22c55e;
-  box-shadow:0 0 40px #22c55e22;
-}
-.call-circle.waiting{
-  animation:waitPulse 2s infinite;
-}
-@keyframes waitPulse{
-  0%,100%{border-color:#333;box-shadow:none}
-  50%{border-color:#22c55e55;box-shadow:0 0 30px #22c55e11}
-}
+.call-circle.connected{border-color:#22c55e;box-shadow:0 0 40px #22c55e22}
+.call-circle.waiting{animation:wp 2s infinite}
+@keyframes wp{0%,100%{border-color:#333}50%{border-color:#22c55e55;box-shadow:0 0 30px #22c55e11}}
 
-#callStatus{
-  font-size:18px;font-weight:500;
-  margin-top:16px;
+#callStatus{font-size:18px;font-weight:500;margin-top:16px}
+#callTimer{font-size:14px;color:#888;margin-top:4px;font-family:'Courier New',monospace}
+
+/* Volume visualizer */
+#volBar{
+  width:120px;height:6px;background:#222;border-radius:3px;
+  margin:12px auto 0;overflow:hidden;
 }
-#callTimer{
-  font-size:14px;color:#888;
-  margin-top:4px;
-  font-family:'Courier New',monospace;
+#volFill{
+  width:0%;height:100%;background:#22c55e;border-radius:3px;
+  transition:width .1s;
 }
-#quality{
-  font-size:12px;margin-top:8px;
-  padding:4px 12px;border-radius:8px;
-  display:inline-block;
-}
-.qgood{background:#22c55e22;color:#22c55e}
-.qmed{background:#f59e0b22;color:#f59e0b}
-.qbad{background:#ef444422;color:#ef4444}
 
 .controls{display:flex;gap:24px;align-items:center}
 .ctrl-btn{
-  width:64px;height:64px;border-radius:50%;
-  border:none;cursor:pointer;
-  font-size:28px;color:#fff;
-  display:flex;align-items:center;justify-content:center;
+  width:64px;height:64px;border-radius:50%;border:none;cursor:pointer;
+  font-size:28px;color:#fff;display:flex;align-items:center;justify-content:center;
   transition:all .15s;
 }
 .ctrl-btn:active{transform:scale(.9)}
@@ -134,7 +81,6 @@ body{
 </head>
 <body>
 
-<!-- JOIN -->
 <div id="joinScreen">
   <h1>📞</h1>
   <p>Enter a room code. Same code = instant call.</p>
@@ -143,55 +89,45 @@ body{
   <div id="error"></div>
 </div>
 
-<!-- CALL -->
 <div id="callScreen">
   <div>
     <div class="room-label">ROOM</div>
     <div class="room-code" id="showCode">------</div>
   </div>
-
   <div>
     <div class="call-circle waiting" id="callCircle">📞</div>
     <div id="callStatus">Waiting for other person...</div>
     <div id="callTimer"></div>
-    <div id="quality" class="qgood">● Good</div>
+    <div id="volBar"><div id="volFill"></div></div>
   </div>
-
   <div class="controls">
     <button class="ctrl-btn" id="muteBtn">🎤</button>
     <button class="ctrl-btn" id="hangBtn">📵</button>
   </div>
 </div>
 
-<audio id="remoteAudio" autoplay playsinline></audio>
-
 <script src="/socket.io/socket.io.js"></script>
 <script>
 (function(){
 
-const ICE = {
-  iceServers: [
-    {urls:"stun:stun.l.google.com:19302"},
-    {urls:"stun:stun1.l.google.com:19302"},
-    {urls:"stun:stun2.l.google.com:19302"},
-    {urls:"stun:stun3.l.google.com:19302"},
-  ]
-};
-
 let socket = null;
-let pc = null;
-let localStream = null;
+let audioCtx = null;
+let micStream = null;
+let micSource = null;
+let processor = null;
+let playbackQueue = [];
+let playing = false;
 let muted = false;
 let callStart = null;
 let timerInterval = null;
-let qualityInterval = null;
 let currentRoom = null;
+let connected = false;
 
 const $ = id => document.getElementById(id);
 
 // ── JOIN ─────────────────────────────────
 $("joinBtn").onclick = join;
-$("codeInput").onkeydown = e => { if(e.key==="Enter") join() };
+$("codeInput").onkeydown = e => { if(e.key==="Enter") join(); };
 $("codeInput").oninput = () => {
   $("codeInput").value = $("codeInput").value.toUpperCase().replace(/[^A-Z0-9]/g,"");
 };
@@ -204,32 +140,34 @@ function join(){
   }
 
   $("joinBtn").disabled = true;
-  $("joinBtn").textContent = "Joining...";
+  $("joinBtn").textContent = "Getting mic...";
   $("error").textContent = "";
 
-  // Get mic FIRST
+  // Get mic first
   navigator.mediaDevices.getUserMedia({
     audio: {
       echoCancellation: true,
       noiseSuppression: true,
       autoGainControl: true,
-      sampleRate: 16000,
-      channelCount: 1,
     },
     video: false,
   }).then(stream => {
-    localStream = stream;
+    micStream = stream;
+    $("joinBtn").textContent = "Joining...";
     connectAndJoin(code);
   }).catch(e => {
     $("joinBtn").disabled = false;
     $("joinBtn").textContent = "Join Room";
-    $("error").textContent = "Microphone access denied. Allow mic and try again.";
-    console.error("Mic error:", e);
+    $("error").textContent = "Mic access denied. Allow microphone and try again.";
   });
 }
 
 function connectAndJoin(code){
-  socket = io({ transports:["websocket","polling"], reconnection:true });
+  socket = io({
+    transports: ["websocket", "polling"],
+    reconnection: true,
+    reconnectionDelay: 1000,
+  });
 
   socket.on("connect", () => {
     socket.emit("join", code, res => {
@@ -237,55 +175,45 @@ function connectAndJoin(code){
         $("joinBtn").disabled = false;
         $("joinBtn").textContent = "Join Room";
         $("error").textContent = res.error;
-        if(localStream){ localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
-        socket.disconnect();
+        cleanup();
         return;
       }
       currentRoom = code;
       showCallScreen(code);
 
       if(res.count === 2){
-        // Other person already here, start call
-        startCall(true);
+        startAudio();
       }
     });
   });
 
-  socket.on("start-call", () => {
-    startCall(true);
+  socket.on("room-count", n => {
+    if(n >= 2 && !connected){
+      startAudio();
+    }
+    if(n < 2){
+      connected = false;
+      $("callStatus").textContent = "Waiting for other person...";
+      $("callCircle").className = "call-circle waiting";
+      $("callCircle").textContent = "📞";
+      $("callTimer").textContent = "";
+      stopTimer();
+    }
   });
 
-  socket.on("signal", async data => {
-    if(!pc) createPC(false);
-    try{
-      if(data.type === "offer"){
-        await pc.setRemoteDescription(new RTCSessionDescription(data));
-        const answer = await pc.createAnswer();
-        answer.sdp = tweakSDP(answer.sdp);
-        await pc.setLocalDescription(answer);
-        socket.emit("signal", pc.localDescription);
-      } else if(data.type === "answer"){
-        await pc.setRemoteDescription(new RTCSessionDescription(data));
-      } else if(data.candidate){
-        await pc.addIceCandidate(new RTCIceCandidate(data));
-      }
-    }catch(e){ console.error("Signal error:", e); }
+  // Receive audio from other person
+  socket.on("audio", (data) => {
+    playAudio(data);
   });
 
   socket.on("peer-left", () => {
+    connected = false;
     $("callStatus").textContent = "Other person left. Waiting...";
     $("callCircle").className = "call-circle waiting";
     $("callCircle").textContent = "📞";
     $("callTimer").textContent = "";
+    $("volFill").style.width = "0%";
     stopTimer();
-    cleanupPC();
-  });
-
-  socket.on("room-count", n => {
-    if(n < 2){
-      $("callStatus").textContent = "Waiting for other person...";
-      $("callCircle").className = "call-circle waiting";
-    }
   });
 
   socket.on("disconnect", () => {
@@ -295,7 +223,7 @@ function connectAndJoin(code){
   socket.on("reconnect", () => {
     if(currentRoom){
       socket.emit("join", currentRoom, res => {
-        if(res.ok && res.count === 2) startCall(true);
+        if(res.ok && res.count >= 2) startAudio();
       });
     }
   });
@@ -307,176 +235,136 @@ function showCallScreen(code){
   $("showCode").textContent = code;
 }
 
-// ── WebRTC ───────────────────────────────
-function createPC(making_offer){
-  if(pc){ try{pc.close()}catch(e){} }
+// ── AUDIO CAPTURE ────────────────────────
+function startAudio(){
+  if(connected) return;
+  connected = true;
 
-  pc = new RTCPeerConnection(ICE);
+  $("callStatus").textContent = "Connected";
+  $("callCircle").className = "call-circle connected";
+  $("callCircle").textContent = "🔊";
+  startTimer();
 
-  // Add mic tracks
-  if(localStream){
-    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-  }
-
-  pc.onicecandidate = e => {
-    if(e.candidate) socket.emit("signal", e.candidate);
-  };
-
-  pc.ontrack = e => {
-    console.log("🔊 Got remote audio");
-    $("remoteAudio").srcObject = e.streams[0];
-    $("remoteAudio").play().catch(()=>{
-      document.addEventListener("click", function r(){
-        $("remoteAudio").play().catch(()=>{});
-        document.removeEventListener("click",r);
-      },{once:true});
+  // Create audio context
+  if(!audioCtx){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: 16000,  // 16kHz — good for voice, low bandwidth
     });
-  };
-
-  pc.onconnectionstatechange = () => {
-    console.log("State:", pc.connectionState);
-    switch(pc.connectionState){
-      case "connected":
-        $("callStatus").textContent = "Connected";
-        $("callCircle").className = "call-circle connected";
-        $("callCircle").textContent = "🔊";
-        startTimer();
-        startQualityCheck();
-        break;
-      case "disconnected":
-        $("callStatus").textContent = "Connection lost...";
-        $("callCircle").className = "call-circle waiting";
-        break;
-      case "failed":
-        $("callStatus").textContent = "Connection failed. Retrying...";
-        try{ pc.restartIce(); }catch(e){
-          // Full reconnect
-          cleanupPC();
-          setTimeout(()=>{ if(currentRoom) startCall(true); }, 2000);
-        }
-        break;
-    }
-  };
-
-  pc.oniceconnectionstatechange = () => {
-    if(pc.iceConnectionState === "failed"){
-      try{ pc.restartIce(); }catch(e){}
-    }
-  };
-
-  return pc;
-}
-
-async function startCall(shouldOffer){
-  createPC(shouldOffer);
-
-  if(shouldOffer){
-    try{
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: false,
-        voiceActivityDetection: true,
-      });
-      offer.sdp = tweakSDP(offer.sdp);
-      await pc.setLocalDescription(offer);
-      socket.emit("signal", pc.localDescription);
-      console.log("📤 Sent offer");
-    }catch(e){
-      console.error("Offer failed:", e);
-    }
   }
 
-  $("callStatus").textContent = "Connecting...";
-}
+  if(audioCtx.state === "suspended") audioCtx.resume();
 
-function tweakSDP(sdp){
-  // Optimize for low bandwidth voice
-  let s = sdp;
-  s = s.replace(
-    /a=fmtp:111 /g,
-    "a=fmtp:111 maxaveragebitrate=24000;stereo=0;usedtx=1;"
-  );
-  return s;
-}
+  // Connect mic to processor
+  micSource = audioCtx.createMediaStreamSource(micStream);
 
-function cleanupPC(){
-  if(qualityInterval){ clearInterval(qualityInterval); qualityInterval=null; }
-  if(pc){ try{pc.close()}catch(e){} pc=null; }
-}
+  // Use ScriptProcessorNode (works everywhere)
+  // Buffer size 4096 at 16kHz = 256ms chunks = ~32KB/s raw, we compress
+  processor = audioCtx.createScriptProcessor(4096, 1, 1);
 
-// ── QUALITY ──────────────────────────────
-function startQualityCheck(){
-  if(qualityInterval) clearInterval(qualityInterval);
-  qualityInterval = setInterval(async()=>{
-    if(!pc || pc.connectionState!=="connected") return;
-    try{
-      const stats = await pc.getStats();
-      let rtt=0, lost=0, recv=0;
-      stats.forEach(r=>{
-        if(r.type==="candidate-pair" && r.state==="succeeded")
-          rtt = r.currentRoundTripTime || 0;
-        if(r.type==="inbound-rtp" && r.kind==="audio"){
-          lost = r.packetsLost||0;
-          recv = r.packetsReceived||0;
-        }
-      });
-      const loss = recv>0 ? lost/(lost+recv) : 0;
-      const ms = Math.round(rtt*1000);
+  processor.onaudioprocess = (e) => {
+    if(muted || !connected || !socket) return;
 
-      let q,cls;
-      if(rtt>0.4 || loss>0.1){ q=`● Poor ${ms}ms`; cls="qbad"; setBitrate(12000); }
-      else if(rtt>0.2 || loss>0.03){ q=`● Fair ${ms}ms`; cls="qmed"; setBitrate(24000); }
-      else { q=`● Good ${ms}ms`; cls="qgood"; setBitrate(48000); }
+    const input = e.inputBuffer.getChannelData(0);
 
-      $("quality").textContent = q;
-      $("quality").className = cls;
-    }catch(e){}
-  }, 3000);
-}
-
-function setBitrate(bps){
-  if(!pc) return;
-  pc.getSenders().forEach(s=>{
-    if(s.track && s.track.kind==="audio"){
-      const p = s.getParameters();
-      if(!p.encodings||!p.encodings.length) p.encodings=[{}];
-      p.encodings[0].maxBitrate = bps;
-      s.setParameters(p).catch(()=>{});
+    // Convert Float32 → Int16 (halves the data)
+    const buf = new Int16Array(input.length);
+    for(let i = 0; i < input.length; i++){
+      let s = Math.max(-1, Math.min(1, input[i]));
+      buf[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
     }
-  });
+
+    // Simple compression: skip if silence
+    let maxVal = 0;
+    for(let i = 0; i < buf.length; i++){
+      const v = Math.abs(buf[i]);
+      if(v > maxVal) maxVal = v;
+    }
+
+    // Update volume bar
+    const vol = Math.min(100, (maxVal / 3000) * 100);
+    $("volFill").style.width = vol + "%";
+
+    // Only send if there's actual sound (voice activity detection)
+    if(maxVal > 200){
+      socket.volatile.emit("audio", buf.buffer);
+    }
+  };
+
+  micSource.connect(processor);
+  processor.connect(audioCtx.destination);  // needed for processor to run
+}
+
+// ── AUDIO PLAYBACK ───────────────────────
+function playAudio(arrayBuf){
+  if(!audioCtx){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: 16000,
+    });
+  }
+  if(audioCtx.state === "suspended") audioCtx.resume();
+
+  try{
+    // Convert Int16 back to Float32
+    const int16 = new Int16Array(arrayBuf);
+    const float32 = new Float32Array(int16.length);
+    for(let i = 0; i < int16.length; i++){
+      float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7FFF);
+    }
+
+    // Create audio buffer and play
+    const audioBuf = audioCtx.createBuffer(1, float32.length, 16000);
+    audioBuf.getChannelData(0).set(float32);
+
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuf;
+
+    // Small gain to avoid clipping
+    const gain = audioCtx.createGain();
+    gain.gain.value = 1.5;
+
+    source.connect(gain);
+    gain.connect(audioCtx.destination);
+    source.start();
+
+    // Update volume bar for incoming audio
+    let maxVal = 0;
+    for(let i = 0; i < float32.length; i++){
+      const v = Math.abs(float32[i]);
+      if(v > maxVal) maxVal = v;
+    }
+    const vol = Math.min(100, maxVal * 150);
+    $("volFill").style.width = vol + "%";
+
+  }catch(e){
+    // Ignore playback errors silently
+  }
 }
 
 // ── TIMER ────────────────────────────────
 function startTimer(){
   callStart = Date.now();
   stopTimer();
-  timerInterval = setInterval(()=>{
-    const s = Math.floor((Date.now()-callStart)/1000);
+  timerInterval = setInterval(() => {
+    const s = Math.floor((Date.now() - callStart) / 1000);
     const m = Math.floor(s/60).toString().padStart(2,"0");
     const sec = (s%60).toString().padStart(2,"0");
     $("callTimer").textContent = `${m}:${sec}`;
-  },1000);
+  }, 1000);
 }
 function stopTimer(){
-  if(timerInterval){clearInterval(timerInterval);timerInterval=null}
+  if(timerInterval){ clearInterval(timerInterval); timerInterval = null; }
 }
 
 // ── CONTROLS ─────────────────────────────
 $("muteBtn").onclick = () => {
-  if(!localStream) return;
   muted = !muted;
-  localStream.getAudioTracks().forEach(t=>{ t.enabled=!muted });
   $("muteBtn").textContent = muted ? "🔇" : "🎤";
   $("muteBtn").classList.toggle("muted", muted);
+  if(muted) $("volFill").style.width = "0%";
 };
 
 $("hangBtn").onclick = () => {
-  cleanupPC();
-  stopTimer();
-  if(localStream){ localStream.getTracks().forEach(t=>t.stop()); localStream=null; }
-  if(socket){ socket.disconnect(); socket=null; }
-  currentRoom = null;
-
+  cleanup();
   // Back to join screen
   $("callScreen").classList.remove("active");
   $("joinScreen").classList.remove("hidden");
@@ -484,21 +372,34 @@ $("hangBtn").onclick = () => {
   $("joinBtn").textContent = "Join Room";
   $("callTimer").textContent = "";
   $("codeInput").value = "";
+  $("volFill").style.width = "0%";
 };
+
+function cleanup(){
+  connected = false;
+  stopTimer();
+  if(processor){ try{processor.disconnect()}catch(e){} processor=null; }
+  if(micSource){ try{micSource.disconnect()}catch(e){} micSource=null; }
+  if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+  if(audioCtx){ try{audioCtx.close()}catch(e){} audioCtx=null; }
+  if(socket){ socket.disconnect(); socket=null; }
+  currentRoom = null;
+}
 
 // ── KEEP SCREEN ON ───────────────────────
 let wakeLock = null;
 async function keepAwake(){
   if(!("wakeLock" in navigator)) return;
-  try{ wakeLock=await navigator.wakeLock.request("screen") }catch(e){}
+  try{ wakeLock = await navigator.wakeLock.request("screen"); }catch(e){}
 }
 keepAwake();
-document.addEventListener("visibilitychange",()=>{
-  if(!document.hidden) keepAwake();
-});
+document.addEventListener("visibilitychange", () => { if(!document.hidden) keepAwake(); });
+
+// ── HANDLE TAB CLOSE ─────────────────────
+window.addEventListener("beforeunload", cleanup);
 
 $("codeInput").focus();
-console.log("📞 VoxCall ready");
+console.log("📞 VoxCall ready (server-relay mode)");
 
 })();
 </script>
