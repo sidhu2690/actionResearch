@@ -1606,8 +1606,7 @@ function sse(){
     else{let h='';for(let i=0;i<nPh;i++)h+=`<div class="seg"></div>`;$('pbar').innerHTML=h}
     sH(d.paper?d.paper.title.substring(0,45)+'...':'loading paper...');
     chat.innerHTML='';mc=0;lw='';
-    sPill('🔬 <b>Colloquium</b> — deep paper teardown with RAG','');
-    if(d.rag_ready)sPill('📚 Full paper indexed: '+d.rag_chunks+' chunks — agents will quote specific lines','');
+    sPill('🔬 <b>Colloquium</b> — deep paper teardown','');
     if(d.messages)d.messages.forEach(m=>{
       if(m.type==='paper')pCard(m);
       else if(m.type==='phase')phPill(m);
