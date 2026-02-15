@@ -27,8 +27,7 @@ jobs:
           nohup python server.py > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
           echo "Server PID: $(cat /tmp/server.pid)"
-          
-          # Wait for server to be fully ready
+
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8080 > /dev/null 2>&1; then
               echo "✅ Server responding on attempt $i"
@@ -37,8 +36,7 @@ jobs:
             echo "  waiting... attempt $i"
             sleep 2
           done
-          
-          # Verify it's really serving
+
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" http://localhost:8080)
           echo "HTTP status: $STATUS"
           if [ "$STATUS" != "200" ]; then
@@ -49,12 +47,10 @@ jobs:
 
       - name: Start tunnel
         run: |
-          # Download cloudflared
           curl -sL -o cloudflared \
             https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cloudflared
-          
-          # Start tunnel with explicit protocol and retry settings
+
           nohup ./cloudflared tunnel \
             --url http://127.0.0.1:8080 \
             --no-autoupdate \
@@ -63,8 +59,7 @@ jobs:
             > /tmp/tunnel.log 2>&1 &
           echo $! > /tmp/tunnel.pid
           echo "Tunnel PID: $(cat /tmp/tunnel.pid)"
-          
-          # Wait longer for tunnel URL
+
           URL=""
           for i in $(seq 1 45); do
             URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
@@ -74,38 +69,34 @@ jobs:
             fi
             sleep 2
           done
-          
+
           if [ -z "$URL" ]; then
-            echo "❌ Tunnel failed to start!"
+            echo "❌ Tunnel failed!"
             cat /tmp/tunnel.log
             exit 1
           fi
-          
-          # Wait for tunnel to stabilize
-          echo "  waiting for tunnel to stabilize..."
+
           sleep 5
-          
-          # Verify the tunnel actually works
+
           TRIES=0
           while [ $TRIES -lt 5 ]; do
             TSTATUS=$(curl -o /dev/null -sf -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null)
             if [ "$TSTATUS" = "200" ]; then
-              echo "  ✅ tunnel verified working (HTTP $TSTATUS)"
+              echo "  ✅ Tunnel verified (HTTP $TSTATUS)"
               break
             fi
-            echo "  tunnel not ready yet (HTTP $TSTATUS), retry..."
+            echo "  tunnel not ready (HTTP $TSTATUS), retry..."
             TRIES=$((TRIES+1))
             sleep 3
           done
-          
+
           echo ""
           echo "==========================================="
           echo "🔬 COLLOQUIUM LIVE:"
           echo "   $URL"
           echo "==========================================="
           echo ""
-          
-          # Save URL for reference
+
           echo "$URL" > /tmp/tunnel_url.txt
 
       - name: Keep alive
@@ -113,17 +104,14 @@ jobs:
           URL=$(cat /tmp/tunnel_url.txt 2>/dev/null || echo "unknown")
           echo "🔬 Colloquium live at: $URL"
           echo "Sleeping 5h 55m..."
-          
-          # Monitor loop instead of plain sleep
+
           END=$(($(date +%s) + 21300))
           while [ $(date +%s) -lt $END ]; do
-            # Check server is still alive
             if ! kill -0 $(cat /tmp/server.pid) 2>/dev/null; then
               echo "⚠️ Server died! Logs:"
               tail -50 /tmp/server.log
               break
             fi
-            # Check tunnel is still alive
             if ! kill -0 $(cat /tmp/tunnel.pid) 2>/dev/null; then
               echo "⚠️ Tunnel died! Restarting..."
               nohup ./cloudflared tunnel \
@@ -141,7 +129,7 @@ jobs:
             fi
             sleep 60
           done
-          
+
           echo ""
           echo "⏰ Time's up."
           tail -20 /tmp/server.log
