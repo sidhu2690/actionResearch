@@ -1,156 +1,90 @@
-
-name: 📱 VoxRoom Live
+name: 📞 VoxCall
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 */6 * * *"
 
 concurrency:
-  group: voxroom
-  cancel-in-progress: false
+  group: voxcall
+  cancel-in-progress: true
 
 jobs:
-  serve:
+  run:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
+        with: { node-version: "20" }
 
-      - name: Install dependencies
-        run: npm install
+      - name: Install & verify
+        run: |
+          npm install
+          node --check server.js && echo "✅ syntax ok"
+          node -e "require('express');require('socket.io');console.log('✅ deps ok')"
 
       - name: Start server
         run: |
-          nohup node server.js > /tmp/server.log 2>&1 &
-          echo $! > /tmp/server.pid
-          echo "Server PID: $(cat /tmp/server.pid)"
+          nohup node server.js > /tmp/app.log 2>&1 &
+          echo $! > /tmp/app.pid
+          sleep 3
 
-          # Wait for server to be ready
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8080/api/health > /dev/null 2>&1; then
-              echo "✅ Server responding on attempt $i"
-              break
-            fi
-            echo "  waiting... attempt $i"
-            sleep 2
+          if ! kill -0 $(cat /tmp/app.pid) 2>/dev/null; then
+            echo "❌ CRASHED"; cat /tmp/app.log; exit 1
+          fi
+
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:8080 > /dev/null && echo "✅ up" && break
+            echo "  wait $i..."; sleep 2
           done
 
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" http://localhost:8080)
-          echo "HTTP status: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "❌ Server not healthy!"
-            cat /tmp/server.log
-            exit 1
+            echo "❌ HTTP $STATUS"; cat /tmp/app.log; exit 1
           fi
 
-          echo "Server health:"
-          curl -s http://localhost:8080/api/health | head -200
-
-      - name: Start tunnel
+      - name: Tunnel
         run: |
-          curl -sL -o cloudflared \
-            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x cloudflared
+          curl -sL -o cf https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cf
 
-          nohup ./cloudflared tunnel \
-            --url http://127.0.0.1:8080 \
-            --no-autoupdate \
-            --protocol http2 \
-            > /tmp/tunnel.log 2>&1 &
-          echo $! > /tmp/tunnel.pid
-          echo "Tunnel PID: $(cat /tmp/tunnel.pid)"
+          nohup ./cf tunnel --url http://127.0.0.1:8080 --no-autoupdate --protocol http2 > /tmp/cf.log 2>&1 &
+          echo $! > /tmp/cf.pid
 
           URL=""
-          for i in $(seq 1 45); do
-            URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
-            if [ -n "$URL" ]; then
-              echo "  tunnel URL found on attempt $i"
-              break
-            fi
-            sleep 2
+          for i in $(seq 1 30); do
+            URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log | head -1)
+            [ -n "$URL" ] && break; sleep 2
           done
 
-          if [ -z "$URL" ]; then
-            echo "❌ Tunnel failed!"
-            cat /tmp/tunnel.log
-            exit 1
-          fi
-
-          # Verify tunnel
-          sleep 5
-          TRIES=0
-          while [ $TRIES -lt 5 ]; do
-            TSTATUS=$(curl -o /dev/null -sf -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null)
-            if [ "$TSTATUS" = "200" ]; then
-              echo "  ✅ Tunnel verified (HTTP $TSTATUS)"
-              break
-            fi
-            echo "  tunnel not ready (HTTP $TSTATUS), retry..."
-            TRIES=$((TRIES+1))
-            sleep 3
-          done
+          if [ -z "$URL" ]; then echo "❌ tunnel failed"; cat /tmp/cf.log; exit 1; fi
 
           echo ""
-          echo "╔═══════════════════════════════════════════╗"
-          echo "║  📱 VOXROOM LIVE                          ║"
-          echo "║  $URL"
-          echo "║                                           ║"
-          echo "║  Share this URL to start calling!          ║"
-          echo "╚═══════════════════════════════════════════╝"
+          echo "════════════════════════════════════"
+          echo "  📞 VoxCall LIVE"
+          echo "  $URL"
           echo ""
-
-          echo "$URL" > /tmp/tunnel_url.txt
+          echo "  Share this link. Enter same code."
+          echo "  Talk."
+          echo "════════════════════════════════════"
+          echo ""
+          echo "$URL" > /tmp/url.txt
 
       - name: Keep alive
         run: |
-          URL=$(cat /tmp/tunnel_url.txt 2>/dev/null || echo "unknown")
-          echo "📱 VoxRoom live at: $URL"
-          echo "Running for 5h 55m..."
-
+          URL=$(cat /tmp/url.txt)
+          echo "📞 Live: $URL"
           END=$(($(date +%s) + 21300))
-          HEARTBEAT=0
-
           while [ $(date +%s) -lt $END ]; do
-            # Check server health
-            if ! kill -0 $(cat /tmp/server.pid) 2>/dev/null; then
-              echo "⚠️ Server died! Restarting..."
-              nohup node server.js > /tmp/server.log 2>&1 &
-              echo $! > /tmp/server.pid
-              sleep 5
+            if ! kill -0 $(cat /tmp/app.pid) 2>/dev/null; then
+              echo "⚠️ restart server"; nohup node server.js > /tmp/app.log 2>&1 &; echo $! > /tmp/app.pid
             fi
-
-            # Check tunnel health
-            if ! kill -0 $(cat /tmp/tunnel.pid) 2>/dev/null; then
-              echo "⚠️ Tunnel died! Restarting..."
-              nohup ./cloudflared tunnel \
-                --url http://127.0.0.1:8080 \
-                --no-autoupdate \
-                --protocol http2 \
-                > /tmp/tunnel.log 2>&1 &
-              echo $! > /tmp/tunnel.pid
-              sleep 10
-              NEWURL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
-              if [ -n "$NEWURL" ]; then
-                echo "🔄 New tunnel URL: $NEWURL"
-              fi
+            if ! kill -0 $(cat /tmp/cf.pid) 2>/dev/null; then
+              echo "⚠️ restart tunnel"
+              nohup ./cf tunnel --url http://127.0.0.1:8080 --no-autoupdate --protocol http2 > /tmp/cf.log 2>&1 &
+              echo $! > /tmp/cf.pid; sleep 10
+              NURL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log | head -1)
+              [ -n "$NURL" ] && echo "🔄 New URL: $NURL"
             fi
-
-            # Periodic health check log
-            HEARTBEAT=$((HEARTBEAT+1))
-            if [ $((HEARTBEAT % 5)) -eq 0 ]; then
-              HEALTH=$(curl -sf http://localhost:8080/api/health 2>/dev/null || echo '{"error":"unreachable"}')
-              REMAINING=$(( (END - $(date +%s)) / 60 ))
-              echo "💓 [$REMAINING min left] $HEALTH"
-            fi
-
             sleep 60
           done
-
-          echo ""
-          echo "⏰ Session ended."
-          tail -30 /tmp/server.log
+          echo "⏰ Done"
