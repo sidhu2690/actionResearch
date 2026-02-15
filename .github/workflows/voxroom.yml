@@ -1,3 +1,4 @@
+
 name: 📱 VoxRoom Live
 
 on:
@@ -16,89 +17,39 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Install dependencies
-        run: |
-          npm install
-          echo ""
-          echo "=== Installed packages ==="
-          ls node_modules/ | head -20
-          echo ""
-          echo "=== Checking key deps ==="
-          node -e "require('express'); console.log('✅ express')"
-          node -e "require('socket.io'); console.log('✅ socket.io')"
-          node -e "require('uuid'); console.log('✅ uuid')"
-          node -e "require('cors'); console.log('✅ cors')"
-          echo ""
-          echo "=== Syntax check ==="
-          node --check server.js && echo "✅ server.js syntax OK" || echo "❌ server.js syntax ERROR"
+        run: npm install
 
       - name: Start server
         run: |
-          # Show what we're running
-          echo "=== server.js first 5 lines ==="
-          head -5 server.js
-          echo ""
-          echo "=== public/ contents ==="
-          find public/ -type f 2>/dev/null || echo "No public/ dir found"
-          echo ""
-
-          # Start server
           nohup node server.js > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
           echo "Server PID: $(cat /tmp/server.pid)"
 
-          # Give it a moment to start (or crash)
-          sleep 3
-
-          # Check if process is still alive
-          if ! kill -0 $(cat /tmp/server.pid) 2>/dev/null; then
-            echo ""
-            echo "❌ SERVER CRASHED ON STARTUP!"
-            echo "=== Server Log ==="
-            cat /tmp/server.log
-            echo "=================="
-            exit 1
-          fi
-
-          # Wait for HTTP response
-          echo "Waiting for HTTP response..."
-          for i in $(seq 1 20); do
-            if curl -sf http://localhost:8080 > /dev/null 2>&1; then
+          # Wait for server to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/api/health > /dev/null 2>&1; then
               echo "✅ Server responding on attempt $i"
               break
-            fi
-            if ! kill -0 $(cat /tmp/server.pid) 2>/dev/null; then
-              echo "❌ Server died during startup!"
-              cat /tmp/server.log
-              exit 1
             fi
             echo "  waiting... attempt $i"
             sleep 2
           done
 
-          # Final check
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" http://localhost:8080)
           echo "HTTP status: $STATUS"
-
           if [ "$STATUS" != "200" ]; then
-            echo ""
-            echo "❌ Server not responding with 200!"
-            echo "=== Server Log ==="
+            echo "❌ Server not healthy!"
             cat /tmp/server.log
-            echo "=================="
             exit 1
           fi
 
-          echo ""
-          echo "=== Health check ==="
-          curl -s http://localhost:8080/api/health
-          echo ""
-          echo "✅ Server is healthy!"
+          echo "Server health:"
+          curl -s http://localhost:8080/api/health | head -200
 
       - name: Start tunnel
         run: |
@@ -118,7 +69,7 @@ jobs:
           for i in $(seq 1 45); do
             URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
             if [ -n "$URL" ]; then
-              echo "Tunnel URL found on attempt $i"
+              echo "  tunnel URL found on attempt $i"
               break
             fi
             sleep 2
@@ -130,28 +81,27 @@ jobs:
             exit 1
           fi
 
+          # Verify tunnel
           sleep 5
-
           TRIES=0
           while [ $TRIES -lt 5 ]; do
-            TSTATUS=$(curl -o /dev/null -sf -w "%{http_code}" --max-time 15 "$URL" 2>/dev/null)
+            TSTATUS=$(curl -o /dev/null -sf -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null)
             if [ "$TSTATUS" = "200" ]; then
-              echo "✅ Tunnel verified (HTTP $TSTATUS)"
+              echo "  ✅ Tunnel verified (HTTP $TSTATUS)"
               break
             fi
-            echo "  tunnel check $TRIES (HTTP $TSTATUS)..."
+            echo "  tunnel not ready (HTTP $TSTATUS), retry..."
             TRIES=$((TRIES+1))
             sleep 3
           done
 
           echo ""
-          echo "╔════════════════════════════════════════════╗"
-          echo "║  📱 VOXROOM LIVE                            ║"
-          echo "║                                             ║"
+          echo "╔═══════════════════════════════════════════╗"
+          echo "║  📱 VOXROOM LIVE                          ║"
           echo "║  $URL"
-          echo "║                                             ║"
-          echo "║  Share this URL to start calling!            ║"
-          echo "╚════════════════════════════════════════════╝"
+          echo "║                                           ║"
+          echo "║  Share this URL to start calling!          ║"
+          echo "╚═══════════════════════════════════════════╝"
           echo ""
 
           echo "$URL" > /tmp/tunnel_url.txt
@@ -160,23 +110,21 @@ jobs:
         run: |
           URL=$(cat /tmp/tunnel_url.txt 2>/dev/null || echo "unknown")
           echo "📱 VoxRoom live at: $URL"
-          echo "Running for ~5h 55m..."
+          echo "Running for 5h 55m..."
 
           END=$(($(date +%s) + 21300))
           HEARTBEAT=0
 
           while [ $(date +%s) -lt $END ]; do
-            # Check server
+            # Check server health
             if ! kill -0 $(cat /tmp/server.pid) 2>/dev/null; then
-              echo "⚠️ Server died! Logs:"
-              tail -30 /tmp/server.log
-              echo "Restarting..."
+              echo "⚠️ Server died! Restarting..."
               nohup node server.js > /tmp/server.log 2>&1 &
               echo $! > /tmp/server.pid
               sleep 5
             fi
 
-            # Check tunnel
+            # Check tunnel health
             if ! kill -0 $(cat /tmp/tunnel.pid) 2>/dev/null; then
               echo "⚠️ Tunnel died! Restarting..."
               nohup ./cloudflared tunnel \
@@ -188,19 +136,21 @@ jobs:
               sleep 10
               NEWURL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel.log | head -1)
               if [ -n "$NEWURL" ]; then
-                echo "🔄 New tunnel: $NEWURL"
+                echo "🔄 New tunnel URL: $NEWURL"
               fi
             fi
 
+            # Periodic health check log
             HEARTBEAT=$((HEARTBEAT+1))
             if [ $((HEARTBEAT % 5)) -eq 0 ]; then
-              HEALTH=$(curl -sf http://localhost:8080/api/health 2>/dev/null || echo "unreachable")
+              HEALTH=$(curl -sf http://localhost:8080/api/health 2>/dev/null || echo '{"error":"unreachable"}')
               REMAINING=$(( (END - $(date +%s)) / 60 ))
-              echo "💓 [${REMAINING}m left] $HEALTH"
+              echo "💓 [$REMAINING min left] $HEALTH"
             fi
 
             sleep 60
           done
 
-          echo "⏰ Done."
-          tail -20 /tmp/server.log
+          echo ""
+          echo "⏰ Session ended."
+          tail -30 /tmp/server.log
