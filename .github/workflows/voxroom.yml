@@ -76,12 +76,15 @@ jobs:
           END=$(($(date +%s) + 21300))
           while [ $(date +%s) -lt $END ]; do
             if ! kill -0 $(cat /tmp/app.pid) 2>/dev/null; then
-              echo "⚠️ restart server"; nohup node server.js > /tmp/app.log 2>&1 &; echo $! > /tmp/app.pid
+              echo "⚠️ restart server"
+              nohup node server.js > /tmp/app.log 2>&1 &
+              echo $! > /tmp/app.pid
             fi
             if ! kill -0 $(cat /tmp/cf.pid) 2>/dev/null; then
               echo "⚠️ restart tunnel"
               nohup ./cf tunnel --url http://127.0.0.1:8080 --no-autoupdate --protocol http2 > /tmp/cf.log 2>&1 &
-              echo $! > /tmp/cf.pid; sleep 10
+              echo $! > /tmp/cf.pid
+              sleep 10
               NURL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log | head -1)
               [ -n "$NURL" ] && echo "🔄 New URL: $NURL"
             fi
