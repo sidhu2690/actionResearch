@@ -1,71 +1,38 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  VoxRoom — Signaling Server v1.1
+//  VoxRoom — Signaling Server
+//  WhatsApp-style calling with low-bandwidth optimization
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 const express = require("express");
 const http = require("http");
+const { Server } = require("socket.io");
+const { v4: uuidv4 } = require("uuid");
 const path = require("path");
-
-let Server, uuidv4, cors;
-
-try {
-  Server = require("socket.io").Server;
-} catch (e) {
-  console.error("❌ socket.io not found:", e.message);
-  process.exit(1);
-}
-
-try {
-  uuidv4 = require("uuid").v4;
-} catch (e) {
-  // Fallback UUID generator if uuid package fails
-  console.warn("⚠ uuid package not found, using fallback");
-  uuidv4 = () => {
-    return "xxxx-xxxx-xxxx-xxxx".replace(/x/g, () =>
-      Math.floor(Math.random() * 16).toString(16)
-    );
-  };
-}
-
-try {
-  cors = require("cors");
-} catch (e) {
-  console.warn("⚠ cors package not found, using manual headers");
-  cors = null;
-}
+const cors = require("cors");
 
 const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] },
+  cors: { origin: "*" },
   pingInterval: 8000,
   pingTimeout: 25000,
   maxHttpBufferSize: 1e6,
   transports: ["websocket", "polling"],
 });
 
-if (cors) {
-  app.use(cors());
-} else {
-  app.use((req, res, next) => {
-    res.header("Access-Control-Allow-Origin", "*");
-    res.header("Access-Control-Allow-Headers", "Content-Type");
-    next();
-  });
-}
-
+app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = process.env.PORT || 8080;
 const BOOT = Date.now();
 
-// ━━ DATA ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━ DATA STORES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const rooms = new Map();
 const socketToUser = new Map();
 
-// ━━ HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━ HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function genCode() {
   const c = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -73,7 +40,7 @@ function genCode() {
   return code;
 }
 
-function genColor(name) {
+function genAvatar(name) {
   const colors = [
     "#25D366","#128C7E","#075E54","#34B7F1",
     "#E91E63","#9C27B0","#673AB7","#2196F3",
@@ -81,9 +48,7 @@ function genColor(name) {
     "#FF5722","#795548","#607D8B","#F44336",
   ];
   let hash = 0;
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  }
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
 }
 
@@ -121,378 +86,291 @@ function systemMsg(room, text) {
   const msg = {
     id: uuidv4(),
     type: "system",
-    text: text,
+    text,
     time: Date.now(),
   };
   room.messages.push(msg);
   io.to(room.code).emit("chat:message", msg);
 }
 
-// ━━ ROUTES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━ API ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 app.get("/api/health", (req, res) => {
   res.json({
     ok: true,
     uptime: Math.floor((Date.now() - BOOT) / 1000),
     rooms: rooms.size,
-    connections: io.engine ? io.engine.clientsCount : 0,
+    connections: io.engine.clientsCount,
   });
 });
 
-// Serve index.html for root and any unmatched routes
-app.get("/", (req, res) => {
-  const indexPath = path.join(__dirname, "public", "index.html");
-  res.sendFile(indexPath, (err) => {
-    if (err) {
-      console.error("Error serving index.html:", err.message);
-      res.status(200).send(`
-        <!DOCTYPE html>
-        <html><head><title>VoxRoom</title></head>
-        <body style="background:#111;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;font-family:sans-serif">
-          <div style="text-align:center">
-            <h1>📱 VoxRoom</h1>
-            <p>Server is running but index.html not found.</p>
-            <p>Check that public/index.html exists.</p>
-          </div>
-        </body></html>
-      `);
-    }
-  });
-});
-
-// ━━ SOCKET.IO ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ━━ SOCKET.IO SIGNALING ━━━━━━━━━━━━━━━━━━━━━━━━
 io.on("connection", (socket) => {
-  console.log(`🔌 ${socket.id} connected (total: ${io.engine.clientsCount})`);
+  console.log(`🔌 ${socket.id} connected`);
 
   let myRoom = null;
   let myUserId = null;
 
   // ── CREATE ROOM ──────────────────────────────
-  socket.on("room:create", (payload, cb) => {
-    try {
-      const { name, userName } = payload || {};
-      const code = genCode();
-      const userId = uuidv4();
-      myUserId = userId;
-      myRoom = code;
+  socket.on("room:create", ({ name, userName }, cb) => {
+    const code = genCode();
+    const userId = uuidv4();
+    myUserId = userId;
+    myRoom = code;
 
-      const uName = (userName || "Anonymous").slice(0, 30);
+    const room = {
+      code,
+      name: name || `Room ${code}`,
+      maxCall: 2,
+      creatorId: userId,
+      createdAt: Date.now(),
+      callActive: false,
+      callMembers: [],
+      users: new Map(),
+      messages: [],
+    };
 
-      const room = {
-        code: code,
-        name: name || `${uName}'s Room`,
-        maxCall: 2,
-        creatorId: userId,
-        createdAt: Date.now(),
-        callActive: false,
-        callMembers: [],
-        users: new Map(),
-        messages: [],
-      };
+    const user = {
+      id: userId,
+      name: userName || "Anonymous",
+      color: genAvatar(userName || "Anonymous"),
+      socketId: socket.id,
+      online: true,
+      joinedAt: Date.now(),
+    };
 
-      const user = {
-        id: userId,
-        name: uName,
-        color: genColor(uName),
-        socketId: socket.id,
-        online: true,
-        joinedAt: Date.now(),
-      };
+    room.users.set(userId, user);
+    rooms.set(code, room);
+    socketToUser.set(socket.id, { roomCode: code, userId });
 
-      room.users.set(userId, user);
-      rooms.set(code, room);
-      socketToUser.set(socket.id, { roomCode: code, userId: userId });
+    socket.join(code);
+    systemMsg(room, `${user.name} created the room`);
 
-      socket.join(code);
-      systemMsg(room, `${user.name} created the room`);
+    console.log(`  🏠 Room ${code} created by ${user.name}`);
 
-      console.log(`  🏠 Room ${code} created by ${user.name}`);
-
-      if (typeof cb === "function") {
-        cb({ ok: true, code: code, userId: userId, room: { code: code, name: room.name } });
-      }
-      broadcastRoom(code);
-    } catch (e) {
-      console.error("room:create error:", e);
-      if (typeof cb === "function") cb({ ok: false, error: "Server error" });
-    }
+    if (cb) cb({ ok: true, code, userId, room: { code, name: room.name } });
+    broadcastRoom(code);
   });
 
   // ── JOIN ROOM ────────────────────────────────
-  socket.on("room:join", (payload, cb) => {
-    try {
-      const { code, userName } = payload || {};
-      const roomCode = (code || "").toUpperCase().trim();
-      const room = rooms.get(roomCode);
-
-      if (!room) {
-        if (typeof cb === "function") cb({ ok: false, error: "Room not found. Check the code." });
-        return;
-      }
-
-      const userId = uuidv4();
-      myUserId = userId;
-      myRoom = roomCode;
-
-      const uName = (userName || "Anonymous").slice(0, 30);
-
-      const user = {
-        id: userId,
-        name: uName,
-        color: genColor(uName),
-        socketId: socket.id,
-        online: true,
-        joinedAt: Date.now(),
-      };
-
-      room.users.set(userId, user);
-      socketToUser.set(socket.id, { roomCode: roomCode, userId: userId });
-
-      socket.join(roomCode);
-      systemMsg(room, `${user.name} joined the room`);
-
-      console.log(`  👤 ${user.name} joined ${roomCode} (${room.users.size} users)`);
-
-      if (typeof cb === "function") {
-        cb({ ok: true, code: roomCode, userId: userId, room: { code: roomCode, name: room.name } });
-      }
-      broadcastRoom(roomCode);
-    } catch (e) {
-      console.error("room:join error:", e);
-      if (typeof cb === "function") cb({ ok: false, error: "Server error" });
+  socket.on("room:join", ({ code, userName }, cb) => {
+    const room = rooms.get(code);
+    if (!room) {
+      if (cb) cb({ ok: false, error: "Room not found. Check the code." });
+      return;
     }
+
+    const userId = uuidv4();
+    myUserId = userId;
+    myRoom = code;
+
+    const user = {
+      id: userId,
+      name: userName || "Anonymous",
+      color: genAvatar(userName || "Anonymous"),
+      socketId: socket.id,
+      online: true,
+      joinedAt: Date.now(),
+    };
+
+    room.users.set(userId, user);
+    socketToUser.set(socket.id, { roomCode: code, userId });
+
+    socket.join(code);
+    systemMsg(room, `${user.name} joined the room`);
+
+    console.log(`  👤 ${user.name} joined ${code}`);
+
+    if (cb) cb({ ok: true, code, userId, room: { code, name: room.name } });
+    broadcastRoom(code);
   });
 
   // ── CHAT MESSAGE ─────────────────────────────
-  socket.on("chat:send", (payload) => {
-    try {
-      if (!myRoom || !myUserId) return;
-      const room = rooms.get(myRoom);
-      if (!room) return;
-      const user = room.users.get(myUserId);
-      if (!user) return;
+  socket.on("chat:send", ({ text }) => {
+    if (!myRoom || !myUserId) return;
+    const room = rooms.get(myRoom);
+    if (!room) return;
+    const user = room.users.get(myUserId);
+    if (!user) return;
 
-      const text = ((payload && payload.text) || "").slice(0, 2000).trim();
-      if (!text) return;
+    const msg = {
+      id: uuidv4(),
+      type: "user",
+      userId: myUserId,
+      userName: user.name,
+      userColor: user.color,
+      text: text.slice(0, 2000),
+      time: Date.now(),
+    };
 
-      const msg = {
-        id: uuidv4(),
-        type: "user",
-        userId: myUserId,
-        userName: user.name,
-        userColor: user.color,
-        text: text,
-        time: Date.now(),
-      };
-
-      room.messages.push(msg);
-
-      // Keep messages bounded
-      if (room.messages.length > 500) {
-        room.messages = room.messages.slice(-300);
-      }
-
-      io.to(myRoom).emit("chat:message", msg);
-    } catch (e) {
-      console.error("chat:send error:", e);
-    }
+    room.messages.push(msg);
+    io.to(myRoom).emit("chat:message", msg);
   });
 
-  // ── ROOM SETTINGS ────────────────────────────
-  socket.on("room:settings", (payload) => {
-    try {
-      if (!myRoom || !myUserId) return;
-      const room = rooms.get(myRoom);
-      if (!room || room.creatorId !== myUserId) return;
+  // ── ROOM SETTINGS (creator only) ────────────
+  socket.on("room:settings", ({ maxCall }) => {
+    if (!myRoom || !myUserId) return;
+    const room = rooms.get(myRoom);
+    if (!room || room.creatorId !== myUserId) return;
 
-      const maxCall = payload && payload.maxCall;
-      if (maxCall >= 2 && maxCall <= 8) {
-        room.maxCall = maxCall;
-        systemMsg(room, `Max call participants changed to ${maxCall}`);
-        broadcastRoom(myRoom);
-      }
-    } catch (e) {
-      console.error("room:settings error:", e);
-    }
-  });
-
-  // ── CALL JOIN ────────────────────────────────
-  socket.on("call:join", (_, cb) => {
-    try {
-      if (!myRoom || !myUserId) return;
-      const room = rooms.get(myRoom);
-      if (!room) return;
-
-      if (room.callMembers.length >= room.maxCall) {
-        if (typeof cb === "function") cb({ ok: false, error: `Call is full (max ${room.maxCall})` });
-        return;
-      }
-
-      if (!room.callMembers.includes(myUserId)) {
-        room.callMembers.push(myUserId);
-      }
-      room.callActive = room.callMembers.length > 0;
-
-      const user = room.users.get(myUserId);
-      systemMsg(room, `${user.name} joined the call`);
-
-      // Notify existing call members about new peer
-      for (const uid of room.callMembers) {
-        if (uid === myUserId) continue;
-        const other = room.users.get(uid);
-        if (!other || !other.socketId) continue;
-
-        socket.emit("call:peer-joined", {
-          peerId: uid,
-          peerName: other.name,
-          peerColor: other.color,
-          shouldOffer: true,
-        });
-
-        io.to(other.socketId).emit("call:peer-joined", {
-          peerId: myUserId,
-          peerName: user.name,
-          peerColor: user.color,
-          shouldOffer: false,
-        });
-      }
-
-      console.log(`  📞 ${user.name} joined call in ${myRoom} (${room.callMembers.length}/${room.maxCall})`);
-
-      if (typeof cb === "function") cb({ ok: true, members: room.callMembers.length });
+    if (maxCall >= 2 && maxCall <= 8) {
+      room.maxCall = maxCall;
+      systemMsg(room, `Max call participants changed to ${maxCall}`);
       broadcastRoom(myRoom);
-    } catch (e) {
-      console.error("call:join error:", e);
-      if (typeof cb === "function") cb({ ok: false, error: "Server error" });
     }
   });
 
-  // ── CALL LEAVE ───────────────────────────────
+  // ── CALL: JOIN ───────────────────────────────
+  socket.on("call:join", (_, cb) => {
+    if (!myRoom || !myUserId) return;
+    const room = rooms.get(myRoom);
+    if (!room) return;
+
+    if (room.callMembers.length >= room.maxCall) {
+      if (cb) cb({ ok: false, error: `Call is full (max ${room.maxCall})` });
+      return;
+    }
+
+    if (!room.callMembers.includes(myUserId)) {
+      room.callMembers.push(myUserId);
+    }
+    room.callActive = room.callMembers.length > 0;
+
+    const user = room.users.get(myUserId);
+    systemMsg(room, `${user.name} joined the call`);
+
+    // Tell existing call members about new peer
+    for (const uid of room.callMembers) {
+      if (uid === myUserId) continue;
+      const other = room.users.get(uid);
+      if (!other) continue;
+      // Tell the new peer about existing members
+      socket.emit("call:peer-joined", {
+        peerId: uid,
+        peerName: other.name,
+        peerColor: other.color,
+        shouldOffer: true,
+      });
+      // Tell existing members about new peer
+      io.to(other.socketId).emit("call:peer-joined", {
+        peerId: myUserId,
+        peerName: user.name,
+        peerColor: user.color,
+        shouldOffer: false,
+      });
+    }
+
+    console.log(`  📞 ${user.name} joined call in ${myRoom} (${room.callMembers.length}/${room.maxCall})`);
+
+    if (cb) cb({ ok: true, members: room.callMembers.length });
+    broadcastRoom(myRoom);
+  });
+
+  // ── CALL: LEAVE ──────────────────────────────
   socket.on("call:leave", () => {
     handleCallLeave();
   });
 
   function handleCallLeave() {
-    try {
-      if (!myRoom || !myUserId) return;
-      const room = rooms.get(myRoom);
-      if (!room) return;
+    if (!myRoom || !myUserId) return;
+    const room = rooms.get(myRoom);
+    if (!room) return;
 
-      const idx = room.callMembers.indexOf(myUserId);
-      if (idx === -1) return;
+    const idx = room.callMembers.indexOf(myUserId);
+    if (idx === -1) return;
 
-      room.callMembers.splice(idx, 1);
-      room.callActive = room.callMembers.length > 0;
+    room.callMembers.splice(idx, 1);
+    room.callActive = room.callMembers.length > 0;
 
-      const user = room.users.get(myUserId);
-      const userName = user ? user.name : "Someone";
-      systemMsg(room, `${userName} left the call`);
+    const user = room.users.get(myUserId);
+    systemMsg(room, `${user?.name || "Someone"} left the call`);
 
-      for (const uid of room.callMembers) {
-        const other = room.users.get(uid);
-        if (other && other.socketId) {
-          io.to(other.socketId).emit("call:peer-left", { peerId: myUserId });
-        }
+    // Tell remaining members
+    for (const uid of room.callMembers) {
+      const other = room.users.get(uid);
+      if (other) {
+        io.to(other.socketId).emit("call:peer-left", { peerId: myUserId });
       }
-
-      console.log(`  📵 ${userName} left call in ${myRoom}`);
-      broadcastRoom(myRoom);
-    } catch (e) {
-      console.error("handleCallLeave error:", e);
     }
+
+    console.log(`  📵 ${user?.name} left call in ${myRoom}`);
+    broadcastRoom(myRoom);
   }
 
   // ── WebRTC SIGNALING ─────────────────────────
-  socket.on("rtc:offer", (payload) => {
-    try {
-      if (!myRoom) return;
-      const room = rooms.get(myRoom);
-      if (!room) return;
-      const target = room.users.get(payload.targetUserId);
-      if (target && target.socketId) {
-        io.to(target.socketId).emit("rtc:offer", {
-          fromUserId: myUserId,
-          offer: payload.offer,
+  socket.on("rtc:offer", ({ targetUserId, offer }) => {
+    if (!myRoom) return;
+    const room = rooms.get(myRoom);
+    if (!room) return;
+    const target = room.users.get(targetUserId);
+    if (target) {
+      io.to(target.socketId).emit("rtc:offer", {
+        fromUserId: myUserId,
+        offer,
+      });
+    }
+  });
+
+  socket.on("rtc:answer", ({ targetUserId, answer }) => {
+    if (!myRoom) return;
+    const room = rooms.get(myRoom);
+    if (!room) return;
+    const target = room.users.get(targetUserId);
+    if (target) {
+      io.to(target.socketId).emit("rtc:answer", {
+        fromUserId: myUserId,
+        answer,
+      });
+    }
+  });
+
+  socket.on("rtc:ice", ({ targetUserId, candidate }) => {
+    if (!myRoom) return;
+    const room = rooms.get(myRoom);
+    if (!room) return;
+    const target = room.users.get(targetUserId);
+    if (target) {
+      io.to(target.socketId).emit("rtc:ice", {
+        fromUserId: myUserId,
+        candidate,
+      });
+    }
+  });
+
+  // ── NETWORK QUALITY REPORT ───────────────────
+  socket.on("net:quality", ({ quality }) => {
+    if (!myRoom || !myUserId) return;
+    const room = rooms.get(myRoom);
+    if (!room) return;
+    // Relay quality info to call peers so they can adapt
+    for (const uid of room.callMembers) {
+      if (uid === myUserId) continue;
+      const other = room.users.get(uid);
+      if (other) {
+        io.to(other.socketId).emit("net:peer-quality", {
+          peerId: myUserId,
+          quality,
         });
       }
-    } catch (e) {
-      console.error("rtc:offer error:", e);
     }
   });
 
-  socket.on("rtc:answer", (payload) => {
-    try {
-      if (!myRoom) return;
-      const room = rooms.get(myRoom);
-      if (!room) return;
-      const target = room.users.get(payload.targetUserId);
-      if (target && target.socketId) {
-        io.to(target.socketId).emit("rtc:answer", {
-          fromUserId: myUserId,
-          answer: payload.answer,
-        });
-      }
-    } catch (e) {
-      console.error("rtc:answer error:", e);
-    }
-  });
-
-  socket.on("rtc:ice", (payload) => {
-    try {
-      if (!myRoom) return;
-      const room = rooms.get(myRoom);
-      if (!room) return;
-      const target = room.users.get(payload.targetUserId);
-      if (target && target.socketId) {
-        io.to(target.socketId).emit("rtc:ice", {
-          fromUserId: myUserId,
-          candidate: payload.candidate,
-        });
-      }
-    } catch (e) {
-      console.error("rtc:ice error:", e);
-    }
-  });
-
-  // ── NETWORK QUALITY ──────────────────────────
-  socket.on("net:quality", (payload) => {
-    try {
-      if (!myRoom || !myUserId) return;
-      const room = rooms.get(myRoom);
-      if (!room) return;
-      for (const uid of room.callMembers) {
-        if (uid === myUserId) continue;
-        const other = room.users.get(uid);
-        if (other && other.socketId) {
-          io.to(other.socketId).emit("net:peer-quality", {
-            peerId: myUserId,
-            quality: payload.quality,
-          });
-        }
-      }
-    } catch (e) {
-      console.error("net:quality error:", e);
-    }
-  });
-
-  // ── TYPING ───────────────────────────────────
+  // ── TYPING INDICATOR ─────────────────────────
   socket.on("chat:typing", () => {
-    try {
-      if (!myRoom || !myUserId) return;
-      const room = rooms.get(myRoom);
-      if (!room) return;
-      const user = room.users.get(myUserId);
-      if (user) {
-        socket.to(myRoom).emit("chat:typing", {
-          userId: myUserId,
-          name: user.name,
-        });
-      }
-    } catch (e) {}
+    if (!myRoom || !myUserId) return;
+    const room = rooms.get(myRoom);
+    if (!room) return;
+    const user = room.users.get(myUserId);
+    if (user) {
+      socket.to(myRoom).emit("chat:typing", {
+        userId: myUserId,
+        name: user.name,
+      });
+    }
   });
 
   // ── DISCONNECT ───────────────────────────────
-  socket.on("disconnect", (reason) => {
-    console.log(`🔌 ${socket.id} disconnected (${reason})`);
+  socket.on("disconnect", () => {
+    console.log(`🔌 ${socket.id} disconnected`);
 
     handleCallLeave();
 
@@ -510,14 +388,13 @@ io.on("connection", (socket) => {
         // Clean up empty rooms after 30 min
         const onlineCount = [...room.users.values()].filter((u) => u.online).length;
         if (onlineCount === 0) {
-          const roomToClean = myRoom;
           setTimeout(() => {
-            const r = rooms.get(roomToClean);
+            const r = rooms.get(myRoom);
             if (r) {
               const still = [...r.users.values()].filter((u) => u.online).length;
               if (still === 0) {
-                rooms.delete(roomToClean);
-                console.log(`  🗑️ Room ${roomToClean} cleaned up`);
+                rooms.delete(myRoom);
+                console.log(`  🗑️ Room ${myRoom} cleaned up`);
               }
             }
           }, 1800000);
@@ -527,37 +404,15 @@ io.on("connection", (socket) => {
 
     socketToUser.delete(socket.id);
   });
-
-  // ── ERROR HANDLER ────────────────────────────
-  socket.on("error", (err) => {
-    console.error(`Socket error for ${socket.id}:`, err);
-  });
 });
 
-// ━━ GLOBAL ERROR HANDLERS ━━━━━━━━━━━━━━━━━━━━━
-process.on("uncaughtException", (err) => {
-  console.error("❌ Uncaught exception:", err);
-});
-
-process.on("unhandledRejection", (err) => {
-  console.error("❌ Unhandled rejection:", err);
-});
-
-// ━━ START ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-server.listen(PORT, "0.0.0.0", () => {
-  console.log("");
-  console.log("╔══════════════════════════════════════╗");
-  console.log("║   📱 VoxRoom v1.1                    ║");
-  console.log(`║   Listening on 0.0.0.0:${PORT}          ║`);
-  console.log(`║   ${new Date().toISOString()}  ║`);
-  console.log("╚══════════════════════════════════════╝");
-  console.log("");
-});
-
-server.on("error", (err) => {
-  console.error("❌ Server error:", err);
-  if (err.code === "EADDRINUSE") {
-    console.error(`Port ${PORT} is already in use!`);
-    process.exit(1);
-  }
+// ━━ BOOT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+server.listen(PORT, () => {
+  console.log(`
+╔══════════════════════════════════════╗
+║   📱 VoxRoom v1.0                    ║
+║   Listening on port ${PORT}             ║
+║   ${new Date().toISOString()}     ║
+╚══════════════════════════════════════╝
+  `);
 });
