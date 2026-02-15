@@ -56,15 +56,8 @@ body{
 #callStatus{font-size:18px;font-weight:500;margin-top:16px}
 #callTimer{font-size:14px;color:#888;margin-top:4px;font-family:'Courier New',monospace}
 
-/* Volume visualizer */
-#volBar{
-  width:120px;height:6px;background:#222;border-radius:3px;
-  margin:12px auto 0;overflow:hidden;
-}
-#volFill{
-  width:0%;height:100%;background:#22c55e;border-radius:3px;
-  transition:width .1s;
-}
+#volBar{width:120px;height:6px;background:#222;border-radius:3px;margin:12px auto 0;overflow:hidden}
+#volFill{width:0%;height:100%;background:#22c55e;border-radius:3px;transition:width .15s}
 
 .controls{display:flex;gap:24px;align-items:center}
 .ctrl-btn{
@@ -111,17 +104,22 @@ body{
 (function(){
 
 let socket = null;
-let audioCtx = null;
+let sendCtx = null;       // separate context for capturing mic
+let recvCtx = null;       // separate context for playback
 let micStream = null;
 let micSource = null;
 let processor = null;
-let playbackQueue = [];
-let playing = false;
 let muted = false;
 let callStart = null;
 let timerInterval = null;
 let currentRoom = null;
 let connected = false;
+
+// ── NOISE SUPPRESSION CONFIG ─────────────
+const NOISE_GATE_THRESHOLD = 400;     // Int16 value. Below this = silence
+const SMOOTHING_SAMPLES = 64;         // Crossfade between chunks to prevent clicks
+const PLAYBACK_GAIN = 1.0;            // No amplification (was 1.5 = noise)
+let nextPlayTime = 0;                 // Schedule playback to avoid gaps/overlaps
 
 const $ = id => document.getElementById(id);
 
@@ -143,7 +141,6 @@ function join(){
   $("joinBtn").textContent = "Getting mic...";
   $("error").textContent = "";
 
-  // Get mic first
   navigator.mediaDevices.getUserMedia({
     audio: {
       echoCancellation: true,
@@ -180,31 +177,24 @@ function connectAndJoin(code){
       }
       currentRoom = code;
       showCallScreen(code);
-
-      if(res.count === 2){
-        startAudio();
-      }
+      if(res.count === 2) startAudio();
     });
   });
 
   socket.on("room-count", n => {
-    if(n >= 2 && !connected){
-      startAudio();
-    }
+    if(n >= 2 && !connected) startAudio();
     if(n < 2){
       connected = false;
       $("callStatus").textContent = "Waiting for other person...";
       $("callCircle").className = "call-circle waiting";
       $("callCircle").textContent = "📞";
       $("callTimer").textContent = "";
+      $("volFill").style.width = "0%";
       stopTimer();
     }
   });
 
-  // Receive audio from other person
-  socket.on("audio", (data) => {
-    playAudio(data);
-  });
+  socket.on("audio", (data) => { playAudio(data); });
 
   socket.on("peer-left", () => {
     connected = false;
@@ -214,6 +204,7 @@ function connectAndJoin(code){
     $("callTimer").textContent = "";
     $("volFill").style.width = "0%";
     stopTimer();
+    nextPlayTime = 0;
   });
 
   socket.on("disconnect", () => {
@@ -235,6 +226,54 @@ function showCallScreen(code){
   $("showCode").textContent = code;
 }
 
+// ── NOISE SUPPRESSION: SENDING SIDE ──────
+// Removes low-level noise before sending
+
+function noiseGate(int16arr){
+  // Calculate RMS energy of the frame
+  let sum = 0;
+  for(let i = 0; i < int16arr.length; i++){
+    sum += int16arr[i] * int16arr[i];
+  }
+  const rms = Math.sqrt(sum / int16arr.length);
+
+  // If below threshold, zero it out (silence)
+  if(rms < NOISE_GATE_THRESHOLD){
+    return null; // don't send silence at all
+  }
+
+  // Soft noise gate: reduce quiet parts further
+  // Anything below half the threshold gets attenuated
+  const halfThresh = NOISE_GATE_THRESHOLD / 2;
+  const result = new Int16Array(int16arr.length);
+  for(let i = 0; i < int16arr.length; i++){
+    const absVal = Math.abs(int16arr[i]);
+    if(absVal < halfThresh){
+      // Attenuate noise floor
+      result[i] = Math.round(int16arr[i] * 0.1);
+    } else {
+      result[i] = int16arr[i];
+    }
+  }
+
+  return result;
+}
+
+// Simple high-pass filter to remove low frequency rumble
+function highPassFilter(int16arr){
+  const result = new Int16Array(int16arr.length);
+  let prev = 0;
+  const alpha = 0.95; // Higher = more bass cut
+
+  for(let i = 0; i < int16arr.length; i++){
+    const curr = int16arr[i];
+    result[i] = Math.round(alpha * (prev + curr - (i > 0 ? int16arr[i-1] : 0)));
+    prev = result[i];
+  }
+
+  return result;
+}
+
 // ── AUDIO CAPTURE ────────────────────────
 function startAudio(){
   if(connected) return;
@@ -245,98 +284,174 @@ function startAudio(){
   $("callCircle").textContent = "🔊";
   startTimer();
 
-  // Create audio context
-  if(!audioCtx){
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)({
-      sampleRate: 16000,  // 16kHz — good for voice, low bandwidth
+  // SEPARATE contexts for send and receive to prevent echo
+  if(!sendCtx){
+    sendCtx = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: 16000,
     });
   }
+  if(sendCtx.state === "suspended") sendCtx.resume();
 
-  if(audioCtx.state === "suspended") audioCtx.resume();
+  if(!recvCtx){
+    recvCtx = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: 16000,
+    });
+  }
+  if(recvCtx.state === "suspended") recvCtx.resume();
 
-  // Connect mic to processor
-  micSource = audioCtx.createMediaStreamSource(micStream);
+  nextPlayTime = 0;
 
-  // Use ScriptProcessorNode (works everywhere)
-  // Buffer size 4096 at 16kHz = 256ms chunks = ~32KB/s raw, we compress
-  processor = audioCtx.createScriptProcessor(4096, 1, 1);
+  // Mic → processor (capture only, NOT connected to output)
+  micSource = sendCtx.createMediaStreamSource(micStream);
+  processor = sendCtx.createScriptProcessor(4096, 1, 1);
+
+  // Dummy destination so processor actually processes
+  // But we DON'T play mic audio locally (prevents echo)
+  const silentGain = sendCtx.createGain();
+  silentGain.gain.value = 0;  // MUTE local playback of mic
 
   processor.onaudioprocess = (e) => {
     if(muted || !connected || !socket) return;
 
     const input = e.inputBuffer.getChannelData(0);
 
-    // Convert Float32 → Int16 (halves the data)
-    const buf = new Int16Array(input.length);
+    // Float32 → Int16
+    let buf = new Int16Array(input.length);
     for(let i = 0; i < input.length; i++){
       let s = Math.max(-1, Math.min(1, input[i]));
       buf[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
     }
 
-    // Simple compression: skip if silence
-    let maxVal = 0;
-    for(let i = 0; i < buf.length; i++){
-      const v = Math.abs(buf[i]);
-      if(v > maxVal) maxVal = v;
+    // Apply high-pass filter (removes rumble/hum)
+    buf = highPassFilter(buf);
+
+    // Apply noise gate
+    const gated = noiseGate(buf);
+    if(!gated){
+      // Silence — update UI but don't send
+      $("volFill").style.width = "0%";
+      return;
     }
 
     // Update volume bar
-    const vol = Math.min(100, (maxVal / 3000) * 100);
+    let maxVal = 0;
+    for(let i = 0; i < gated.length; i++){
+      const v = Math.abs(gated[i]);
+      if(v > maxVal) maxVal = v;
+    }
+    const vol = Math.min(100, (maxVal / 5000) * 100);
     $("volFill").style.width = vol + "%";
 
-    // Only send if there's actual sound (voice activity detection)
-    if(maxVal > 200){
-      socket.volatile.emit("audio", buf.buffer);
-    }
+    // Send compressed audio
+    socket.volatile.emit("audio", gated.buffer);
   };
 
   micSource.connect(processor);
-  processor.connect(audioCtx.destination);  // needed for processor to run
+  processor.connect(silentGain);
+  silentGain.connect(sendCtx.destination);
 }
 
-// ── AUDIO PLAYBACK ───────────────────────
+// ── AUDIO PLAYBACK (with smoothing) ──────
 function playAudio(arrayBuf){
-  if(!audioCtx){
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+  if(!recvCtx){
+    recvCtx = new (window.AudioContext || window.webkitAudioContext)({
       sampleRate: 16000,
     });
   }
-  if(audioCtx.state === "suspended") audioCtx.resume();
+  if(recvCtx.state === "suspended") recvCtx.resume();
 
   try{
-    // Convert Int16 back to Float32
+    // Int16 → Float32
     const int16 = new Int16Array(arrayBuf);
     const float32 = new Float32Array(int16.length);
     for(let i = 0; i < int16.length; i++){
       float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7FFF);
     }
 
-    // Create audio buffer and play
-    const audioBuf = audioCtx.createBuffer(1, float32.length, 16000);
+    // ── Apply receive-side noise reduction ──
+    // Soft limiter to prevent harsh peaks
+    for(let i = 0; i < float32.length; i++){
+      const x = float32[i];
+      // Soft clipping using tanh-like curve
+      if(Math.abs(x) > 0.5){
+        float32[i] = x > 0
+          ? 0.5 + 0.5 * Math.tanh(2 * (x - 0.5))
+          : -0.5 - 0.5 * Math.tanh(2 * (-x - 0.5));
+      }
+    }
+
+    // ── Fade in/out edges to prevent clicks ──
+    const fadeLen = Math.min(SMOOTHING_SAMPLES, float32.length / 4);
+    for(let i = 0; i < fadeLen; i++){
+      const t = i / fadeLen;
+      // Smooth fade curve (sine)
+      const fade = 0.5 * (1 - Math.cos(Math.PI * t));
+      float32[i] *= fade;
+      float32[float32.length - 1 - i] *= fade;
+    }
+
+    // Create buffer
+    const audioBuf = recvCtx.createBuffer(1, float32.length, 16000);
     audioBuf.getChannelData(0).set(float32);
 
-    const source = audioCtx.createBufferSource();
+    const source = recvCtx.createBufferSource();
     source.buffer = audioBuf;
 
-    // Small gain to avoid clipping
-    const gain = audioCtx.createGain();
-    gain.gain.value = 1.5;
+    // ── Playback chain: source → lowpass → gain → output ──
 
-    source.connect(gain);
-    gain.connect(audioCtx.destination);
-    source.start();
+    // Low-pass filter: cuts harsh high frequency noise
+    const lowpass = recvCtx.createBiquadFilter();
+    lowpass.type = "lowpass";
+    lowpass.frequency.value = 7000;  // Voice is mostly below 4kHz, keep some headroom
+    lowpass.Q.value = 0.7;
 
-    // Update volume bar for incoming audio
+    // High-pass filter: cuts rumble
+    const highpass = recvCtx.createBiquadFilter();
+    highpass.type = "highpass";
+    highpass.frequency.value = 80;   // Cut below 80Hz
+    highpass.Q.value = 0.7;
+
+    // Compressor: normalizes loud/quiet parts
+    const compressor = recvCtx.createDynamicsCompressor();
+    compressor.threshold.value = -24;
+    compressor.knee.value = 12;
+    compressor.ratio.value = 4;
+    compressor.attack.value = 0.003;
+    compressor.release.value = 0.1;
+
+    // Final gain (no amplification!)
+    const gain = recvCtx.createGain();
+    gain.gain.value = PLAYBACK_GAIN;
+
+    // Connect chain
+    source.connect(highpass);
+    highpass.connect(lowpass);
+    lowpass.connect(compressor);
+    compressor.connect(gain);
+    gain.connect(recvCtx.destination);
+
+    // ── Schedule playback seamlessly ──
+    const now = recvCtx.currentTime;
+    const duration = audioBuf.duration;
+
+    if(nextPlayTime < now){
+      // We're behind — play immediately with tiny offset
+      nextPlayTime = now + 0.01;
+    }
+
+    source.start(nextPlayTime);
+    nextPlayTime += duration;
+
+    // Update volume bar
     let maxVal = 0;
     for(let i = 0; i < float32.length; i++){
       const v = Math.abs(float32[i]);
       if(v > maxVal) maxVal = v;
     }
-    const vol = Math.min(100, maxVal * 150);
-    $("volFill").style.width = vol + "%";
+    $("volFill").style.width = Math.min(100, maxVal * 120) + "%";
 
   }catch(e){
-    // Ignore playback errors silently
+    // Ignore playback errors
   }
 }
 
@@ -365,7 +480,6 @@ $("muteBtn").onclick = () => {
 
 $("hangBtn").onclick = () => {
   cleanup();
-  // Back to join screen
   $("callScreen").classList.remove("active");
   $("joinScreen").classList.remove("hidden");
   $("joinBtn").disabled = false;
@@ -378,10 +492,12 @@ $("hangBtn").onclick = () => {
 function cleanup(){
   connected = false;
   stopTimer();
+  nextPlayTime = 0;
   if(processor){ try{processor.disconnect()}catch(e){} processor=null; }
   if(micSource){ try{micSource.disconnect()}catch(e){} micSource=null; }
   if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
-  if(audioCtx){ try{audioCtx.close()}catch(e){} audioCtx=null; }
+  if(sendCtx){ try{sendCtx.close()}catch(e){} sendCtx=null; }
+  if(recvCtx){ try{recvCtx.close()}catch(e){} recvCtx=null; }
   if(socket){ socket.disconnect(); socket=null; }
   currentRoom = null;
 }
@@ -394,12 +510,10 @@ async function keepAwake(){
 }
 keepAwake();
 document.addEventListener("visibilitychange", () => { if(!document.hidden) keepAwake(); });
-
-// ── HANDLE TAB CLOSE ─────────────────────
 window.addEventListener("beforeunload", cleanup);
 
 $("codeInput").focus();
-console.log("📞 VoxCall ready (server-relay mode)");
+console.log("📞 VoxCall ready (clean audio mode)");
 
 })();
 </script>
