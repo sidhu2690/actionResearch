@@ -1,4 +1,4 @@
-name: 🔬 Colloquium Live
+name: 📱 VoxRoom Live
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     - cron: "0 */6 * * *"
 
 concurrency:
-  group: colloquium
+  group: voxroom
   cancel-in-progress: false
 
 jobs:
@@ -16,20 +16,22 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - run: pip install -q flask groq pymupdf scikit-learn numpy
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
 
       - name: Start server
-        env:
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
         run: |
-          nohup python server.py > /tmp/server.log 2>&1 &
+          nohup node server.js > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
           echo "Server PID: $(cat /tmp/server.pid)"
 
+          # Wait for server to be ready
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:8080 > /dev/null 2>&1; then
+            if curl -sf http://localhost:8080/api/health > /dev/null 2>&1; then
               echo "✅ Server responding on attempt $i"
               break
             fi
@@ -45,6 +47,9 @@ jobs:
             exit 1
           fi
 
+          echo "Server health:"
+          curl -s http://localhost:8080/api/health | head -200
+
       - name: Start tunnel
         run: |
           curl -sL -o cloudflared \
@@ -55,7 +60,6 @@ jobs:
             --url http://127.0.0.1:8080 \
             --no-autoupdate \
             --protocol http2 \
-            --no-chunked-encoding \
             > /tmp/tunnel.log 2>&1 &
           echo $! > /tmp/tunnel.pid
           echo "Tunnel PID: $(cat /tmp/tunnel.pid)"
@@ -76,8 +80,8 @@ jobs:
             exit 1
           fi
 
+          # Verify tunnel
           sleep 5
-
           TRIES=0
           while [ $TRIES -lt 5 ]; do
             TSTATUS=$(curl -o /dev/null -sf -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null)
@@ -91,10 +95,12 @@ jobs:
           done
 
           echo ""
-          echo "==========================================="
-          echo "🔬 COLLOQUIUM LIVE (with RAG):"
-          echo "   $URL"
-          echo "==========================================="
+          echo "╔═══════════════════════════════════════════╗"
+          echo "║  📱 VOXROOM LIVE                          ║"
+          echo "║  $URL"
+          echo "║                                           ║"
+          echo "║  Share this URL to start calling!          ║"
+          echo "╚═══════════════════════════════════════════╝"
           echo ""
 
           echo "$URL" > /tmp/tunnel_url.txt
@@ -102,23 +108,28 @@ jobs:
       - name: Keep alive
         run: |
           URL=$(cat /tmp/tunnel_url.txt 2>/dev/null || echo "unknown")
-          echo "🔬 Colloquium live at: $URL"
-          echo "Sleeping 5h 55m..."
+          echo "📱 VoxRoom live at: $URL"
+          echo "Running for 5h 55m..."
 
           END=$(($(date +%s) + 21300))
+          HEARTBEAT=0
+
           while [ $(date +%s) -lt $END ]; do
+            # Check server health
             if ! kill -0 $(cat /tmp/server.pid) 2>/dev/null; then
-              echo "⚠️ Server died! Logs:"
-              tail -50 /tmp/server.log
-              break
+              echo "⚠️ Server died! Restarting..."
+              nohup node server.js > /tmp/server.log 2>&1 &
+              echo $! > /tmp/server.pid
+              sleep 5
             fi
+
+            # Check tunnel health
             if ! kill -0 $(cat /tmp/tunnel.pid) 2>/dev/null; then
               echo "⚠️ Tunnel died! Restarting..."
               nohup ./cloudflared tunnel \
                 --url http://127.0.0.1:8080 \
                 --no-autoupdate \
                 --protocol http2 \
-                --no-chunked-encoding \
                 > /tmp/tunnel.log 2>&1 &
               echo $! > /tmp/tunnel.pid
               sleep 10
@@ -127,9 +138,18 @@ jobs:
                 echo "🔄 New tunnel URL: $NEWURL"
               fi
             fi
+
+            # Periodic health check log
+            HEARTBEAT=$((HEARTBEAT+1))
+            if [ $((HEARTBEAT % 5)) -eq 0 ]; then
+              HEALTH=$(curl -sf http://localhost:8080/api/health 2>/dev/null || echo '{"error":"unreachable"}')
+              REMAINING=$(( (END - $(date +%s)) / 60 ))
+              echo "💓 [$REMAINING min left] $HEALTH"
+            fi
+
             sleep 60
           done
 
           echo ""
-          echo "⏰ Time's up."
-          tail -20 /tmp/server.log
+          echo "⏰ Session ended."
+          tail -30 /tmp/server.log
