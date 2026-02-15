@@ -29,34 +29,106 @@ jobs:
           sleep 3
 
           if ! kill -0 $(cat /tmp/app.pid) 2>/dev/null; then
-            echo "❌ CRASHED"; cat /tmp/app.log; exit 1
+            echo "❌ CRASHED"
+            cat /tmp/app.log
+            exit 1
           fi
 
           for i in $(seq 1 15); do
-            curl -sf http://localhost:8080 > /dev/null && echo "✅ up" && break
-            echo "  wait $i..."; sleep 2
+            curl -sf http://localhost:8080 > /dev/null && echo "✅ server up" && break
+            echo "  wait $i..."
+            sleep 2
           done
 
           STATUS=$(curl -o /dev/null -s -w "%{http_code}" http://localhost:8080)
           if [ "$STATUS" != "200" ]; then
-            echo "❌ HTTP $STATUS"; cat /tmp/app.log; exit 1
+            echo "❌ HTTP $STATUS"
+            cat /tmp/app.log
+            exit 1
           fi
+
+          echo "=== Server log ==="
+          cat /tmp/app.log
+          echo "=================="
 
       - name: Tunnel
         run: |
           curl -sL -o cf https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x cf
 
-          nohup ./cf tunnel --url http://127.0.0.1:8080 --no-autoupdate --protocol http2 > /tmp/cf.log 2>&1 &
+          # Start tunnel WITHOUT --protocol flag (let it auto-detect)
+          nohup ./cf tunnel --url http://localhost:8080 --no-autoupdate > /tmp/cf.log 2>&1 &
           echo $! > /tmp/cf.pid
 
+          echo "Waiting for tunnel URL..."
           URL=""
-          for i in $(seq 1 30); do
+          for i in $(seq 1 40); do
             URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log | head -1)
-            [ -n "$URL" ] && break; sleep 2
+            if [ -n "$URL" ]; then
+              echo "  Found URL on attempt $i"
+              break
+            fi
+            sleep 2
           done
 
-          if [ -z "$URL" ]; then echo "❌ tunnel failed"; cat /tmp/cf.log; exit 1; fi
+          if [ -z "$URL" ]; then
+            echo "❌ No tunnel URL found"
+            cat /tmp/cf.log
+            exit 1
+          fi
+
+          echo "Tunnel URL: $URL"
+          echo "Waiting for tunnel to be reachable..."
+          sleep 5
+
+          # Verify tunnel actually works
+          VERIFIED=0
+          for i in $(seq 1 10); do
+            HTTP=$(curl -o /dev/null -sf -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null || echo "000")
+            echo "  Verify attempt $i: HTTP $HTTP"
+            if [ "$HTTP" = "200" ]; then
+              VERIFIED=1
+              break
+            fi
+            sleep 3
+          done
+
+          if [ "$VERIFIED" = "0" ]; then
+            echo ""
+            echo "⚠️ Tunnel not responding. Restarting tunnel..."
+            kill $(cat /tmp/cf.pid) 2>/dev/null
+            sleep 2
+
+            # Try again
+            nohup ./cf tunnel --url http://localhost:8080 --no-autoupdate > /tmp/cf.log 2>&1 &
+            echo $! > /tmp/cf.pid
+
+            URL=""
+            for i in $(seq 1 30); do
+              URL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log | head -1)
+              [ -n "$URL" ] && break
+              sleep 2
+            done
+
+            if [ -z "$URL" ]; then
+              echo "❌ Tunnel failed twice"
+              cat /tmp/cf.log
+              exit 1
+            fi
+
+            echo "New URL: $URL"
+            sleep 8
+
+            for i in $(seq 1 10); do
+              HTTP=$(curl -o /dev/null -sf -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null || echo "000")
+              echo "  Verify attempt $i: HTTP $HTTP"
+              if [ "$HTTP" = "200" ]; then
+                VERIFIED=1
+                break
+              fi
+              sleep 3
+            done
+          fi
 
           echo ""
           echo "════════════════════════════════════"
@@ -69,25 +141,47 @@ jobs:
           echo ""
           echo "$URL" > /tmp/url.txt
 
+          echo "=== Tunnel log ==="
+          tail -20 /tmp/cf.log
+          echo "=================="
+
       - name: Keep alive
         run: |
           URL=$(cat /tmp/url.txt)
           echo "📞 Live: $URL"
           END=$(($(date +%s) + 21300))
+          COUNT=0
           while [ $(date +%s) -lt $END ]; do
+            # Check server
             if ! kill -0 $(cat /tmp/app.pid) 2>/dev/null; then
-              echo "⚠️ restart server"
+              echo "⚠️ Server died, restarting..."
+              cat /tmp/app.log
               nohup node server.js > /tmp/app.log 2>&1 &
               echo $! > /tmp/app.pid
+              sleep 3
             fi
+
+            # Check tunnel
             if ! kill -0 $(cat /tmp/cf.pid) 2>/dev/null; then
-              echo "⚠️ restart tunnel"
-              nohup ./cf tunnel --url http://127.0.0.1:8080 --no-autoupdate --protocol http2 > /tmp/cf.log 2>&1 &
+              echo "⚠️ Tunnel died, restarting..."
+              nohup ./cf tunnel --url http://localhost:8080 --no-autoupdate > /tmp/cf.log 2>&1 &
               echo $! > /tmp/cf.pid
               sleep 10
               NURL=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/cf.log | head -1)
-              [ -n "$NURL" ] && echo "🔄 New URL: $NURL"
+              if [ -n "$NURL" ]; then
+                echo "🔄 New URL: $NURL"
+                echo "$NURL" > /tmp/url.txt
+              fi
             fi
+
+            # Heartbeat every 5 min
+            COUNT=$((COUNT+1))
+            if [ $((COUNT % 5)) -eq 0 ]; then
+              REMAINING=$(( (END - $(date +%s)) / 60 ))
+              HTTP=$(curl -o /dev/null -sf -w "%{http_code}" --max-time 5 http://localhost:8080 2>/dev/null || echo "000")
+              echo "💓 [${REMAINING}m left] local=$HTTP tunnel_pid=$(cat /tmp/cf.pid)"
+            fi
+
             sleep 60
           done
           echo "⏰ Done"
