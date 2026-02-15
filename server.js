@@ -8,12 +8,12 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*" },
   transports: ["websocket", "polling"],
+  maxHttpBufferSize: 1e6,
 });
 
 app.use(express.static(path.join(__dirname, "public")));
 const PORT = process.env.PORT || 8080;
 
-// Track rooms: code → Set of socket ids
 const rooms = new Map();
 
 io.on("connection", (socket) => {
@@ -21,38 +21,25 @@ io.on("connection", (socket) => {
 
   socket.on("join", (code, cb) => {
     code = (code || "").toUpperCase().trim();
-    if (!code || code.length < 3) {
-      cb({ ok: false, error: "Code too short" });
-      return;
-    }
+    if (!code || code.length < 3) return cb({ ok: false, error: "Code too short" });
 
     if (!rooms.has(code)) rooms.set(code, new Set());
     const room = rooms.get(code);
 
-    if (room.size >= 2) {
-      cb({ ok: false, error: "Room full" });
-      return;
-    }
+    if (room.size >= 2) return cb({ ok: false, error: "Room full (2/2)" });
 
     room.add(socket.id);
     socket.join(code);
     myRoom = code;
 
-    console.log(`📞 ${socket.id} joined ${code} (${room.size}/2)`);
+    console.log(`📞 ${socket.id} → room ${code} (${room.size}/2)`);
     cb({ ok: true, count: room.size });
-
-    // Tell everyone in room the count
     io.to(code).emit("room-count", room.size);
-
-    // If 2 people, tell the joiner to make the offer
-    if (room.size === 2) {
-      socket.emit("start-call", true); // you offer
-    }
   });
 
-  // WebRTC signaling — just relay
-  socket.on("signal", (data) => {
-    if (myRoom) socket.to(myRoom).emit("signal", data);
+  // Relay audio chunks to the other person
+  socket.on("audio", (data) => {
+    if (myRoom) socket.to(myRoom).volatile.emit("audio", data);
   });
 
   socket.on("disconnect", () => {
@@ -68,5 +55,5 @@ io.on("connection", (socket) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log(`📞 VoxCall running on port ${PORT}`);
+  console.log(`📞 VoxCall on port ${PORT}`);
 });
