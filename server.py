@@ -1,12 +1,23 @@
 #!/usr/bin/env python3
-"""Colloquium — Deep single-paper AI research teardown."""
+"""Colloquium — Deep single-paper AI research teardown with RAG."""
 
-import json, os, re, random, time, queue, threading, uuid
+import json, os, re, random, time, queue, threading, uuid, tempfile
 import urllib.request, xml.etree.ElementTree as ET
+import numpy as np
 from datetime import datetime, timezone
 from flask import Flask, Response, request, jsonify
 
-# ━━ CONFIG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━ RAG IMPORTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+try:
+    import fitz  # pymupdf
+except ImportError:
+    fitz = None
+    print("⚠ pymupdf not installed. Will fall back to abstract only.")
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# ━━ CONFIG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BOOT       = time.time()
 MAX_UP     = 21300
 GAP        = 30
@@ -14,6 +25,11 @@ USER_WAIT  = 5
 MODEL      = "llama-3.1-8b-instant"
 BACKUP     = "meta-llama/llama-4-scout-17b-16e-instruct"
 PORT       = 8080
+
+# RAG settings
+CHUNK_SIZE    = 200   # words per chunk
+CHUNK_OVERLAP = 40    # overlap words between chunks
+TOP_K         = 4     # chunks to retrieve per query
 
 AGENTS = [
     {"name": "Aria",  "avatar": "🔹", "color": "#42a5f5",
@@ -34,14 +50,14 @@ PHASES = [
         "desc": "Initial reactions — what is this, what jumps out, what smells off",
         "rounds": 20,
         "prompts": [
-            "What's your gut reaction to this abstract? Don't hold back.",
+            "What's your gut reaction to this paper? Don't hold back.",
             "What's the actual core claim here? Strip away the fluff.",
-            "What red flags do you already see just from the abstract?",
-            "What's suspiciously missing from this abstract?",
+            "What red flags do you see from reading this?",
+            "What's suspiciously missing from this paper?",
             "Does the writing quality tell you anything? Buzzword density?",
             "What questions would you immediately ask the authors?",
             "How does this position itself in the field? Honest or overselling?",
-            "What can you infer about the methodology just from the abstract?",
+            "What can you tell about the methodology from what you've read?",
         ],
     },
     {
@@ -51,14 +67,14 @@ PHASES = [
         "prompts": [
             "List the specific claims this paper makes. Which ones are testable?",
             "Which claim is the weakest? Why?",
-            "Are there hidden implicit claims not explicitly stated?",
+            "Are there hidden claims not explicitly stated?",
             "What evidence would you NEED to believe these claims?",
-            "Is there overclaiming? Where exactly?",
+            "Is there overclaiming? Where exactly? Quote the lines.",
             "Do the claimed contributions match what's actually described?",
             "Challenge {target}'s take on the claims. Push harder.",
             "If you were a reviewer, which claim would you reject first?",
             "Are the claims novel or just restatements of known results?",
-            "What's the gap between what they claim and what they likely prove?",
+            "What's the gap between what they claim and what they show?",
         ],
     },
     {
@@ -66,17 +82,17 @@ PHASES = [
         "desc": "How they did it — and everything wrong with how they did it",
         "rounds": 35,
         "prompts": [
-            "What methodology can you infer? What are its fundamental flaws?",
+            "What is the actual methodology? What are its fundamental flaws?",
             "What alternatives should they have considered?",
             "What assumptions does this approach REQUIRE to work?",
-            "What are the obvious failure modes they probably don't discuss?",
-            "Is this methodology appropriate for the problem? Or forced?",
+            "What are the obvious failure modes they don't discuss?",
+            "Is this methodology right for the problem? Or forced?",
             "Respond to {target} — is their critique of the method fair?",
             "What would break this approach in practice?",
-            "Is this method overcomplicated for what it does?",
+            "Is this method too complicated for what it does?",
             "What's the simplest baseline that might match their results?",
             "Would this methodology survive a real-world deployment?",
-            "What computational costs are they probably hiding?",
+            "What computational costs are they hiding?",
             "Is the approach principled or just empirical hacking?",
         ],
     },
@@ -85,16 +101,16 @@ PHASES = [
         "desc": "Checking the math — equations, derivations, assumptions, rigor",
         "rounds": 30,
         "prompts": [
-            "What mathematical framework is implied? Is it the right one?",
-            "What mathematical assumptions are they probably making? Which are dangerous?",
-            "What convergence/stability guarantees would this need?",
-            "Is the theoretical contribution actually novel mathematically?",
+            "What math framework do they use? Is it the right one?",
+            "What math assumptions are they making? Which ones are risky?",
+            "What convergence or stability guarantees would this need?",
+            "Is the theory actually new mathematically?",
             "What's the likely complexity? Are they honest about it?",
             "Respond to {target}'s math point. Agree or tear it apart.",
-            "What proofs would you demand to see in the full paper?",
-            "Are there obvious mathematical shortcuts or hand-waves?",
+            "What proofs would you demand to see?",
+            "Are there obvious math shortcuts or hand-waves?",
             "What edge cases would break their theoretical claims?",
-            "Is the math actual contribution or just window dressing?",
+            "Is the math real contribution or just window dressing?",
         ],
     },
     {
@@ -102,16 +118,16 @@ PHASES = [
         "desc": "Is the evaluation sound or theater?",
         "rounds": 30,
         "prompts": [
-            "What experiments would properly validate these claims?",
-            "What baselines MUST they compare against? Bet they're missing some.",
-            "Which metrics are appropriate and which might be misleading here?",
-            "What datasets would you need? Are they likely cherry-picked?",
-            "What ablation studies are essential but probably missing?",
+            "What experiments would properly test these claims?",
+            "What baselines MUST they compare against?",
+            "Which metrics are right and which might mislead here?",
+            "What datasets would you need? Are they cherry-picked?",
+            "What ablation studies are needed but probably missing?",
             "Respond to {target}'s point about experiments.",
-            "How would YOU design the evaluation if you were doing this right?",
-            "Is the evaluation comprehensive or just showing what works?",
+            "How would YOU design the evaluation if doing this right?",
+            "Is the evaluation complete or just showing what works?",
             "What failure cases should they report but probably don't?",
-            "Could the results be explained by a simpler hypothesis?",
+            "Could the results be explained by something simpler?",
         ],
     },
     {
@@ -120,17 +136,17 @@ PHASES = [
         "rounds": 30,
         "prompts": [
             "How novel is this REALLY? Be brutal.",
-            "Is this incremental work dressed up as a breakthrough?",
-            "Could this be seen as repackaging existing ideas with new jargon?",
-            "Does this solve a real problem or a manufactured one?",
-            "Would a tough NeurIPS/ICML reviewer accept this? Why or why not?",
-            "Respond to {target}. Is their novelty assessment fair?",
-            "Is this the kind of paper that inflates citation counts but adds nothing?",
-            "What prior work are they probably failing to cite?",
-            "Is the 'gap in literature' they're filling actually a gap worth filling?",
-            "Rate the BS level 1-10. Justify.",
-            "Is this engineering masquerading as science?",
-            "Would the field be any different if this paper didn't exist?",
+            "Is this small work dressed up as a breakthrough?",
+            "Could this be repackaging old ideas with new jargon?",
+            "Does this solve a real problem or a made-up one?",
+            "Would a tough NeurIPS reviewer accept this? Why not?",
+            "Respond to {target}. Is their novelty take fair?",
+            "Is this the kind of paper that pads citation counts but adds nothing?",
+            "What prior work are they probably not citing?",
+            "Is the 'gap' they fill actually worth filling?",
+            "Rate the BS level 1-10. Explain.",
+            "Is this engineering pretending to be science?",
+            "Would the field be any different without this paper?",
         ],
     },
     {
@@ -139,12 +155,12 @@ PHASES = [
         "rounds": 20,
         "prompts": [
             "In fairness, what IS genuinely good about this work?",
-            "What could be impactful IF the claims hold up?",
-            "What technical decisions seem well-thought-out?",
-            "Is there a kernel of a good idea buried in here?",
+            "What could matter IF the claims hold up?",
+            "What technical choices seem well-thought-out?",
+            "Is there a good idea buried in here?",
             "Respond to {target}. Do you agree that's a real strength?",
-            "What's the best-case scenario for this research line?",
-            "Would you build on this work? What part specifically?",
+            "What's the best-case scenario for this research?",
+            "Would you build on this work? What part?",
             "What did they get RIGHT that others get wrong?",
         ],
     },
@@ -155,18 +171,18 @@ PHASES = [
         "prompts": [
             "Respond to what was just said. Push deeper.",
             "Challenge {target}'s last point directly.",
-            "Bring up something nobody has mentioned yet about this paper.",
-            "Connect this paper to a broader trend in ML. Good or bad?",
+            "Bring up something nobody mentioned yet about this paper.",
+            "Connect this paper to a bigger trend in ML. Good or bad?",
             "What would you do differently if you were the authors?",
-            "Play devil's advocate — defend the paper against the criticism so far.",
-            "What's the most important unresolved question about this work?",
+            "Play devil's advocate — defend the paper against the criticism.",
+            "What's the most important open question about this work?",
             "If you had 5 minutes with the authors, what would you ask?",
-            "Respond to {target} — you disagree. Explain why.",
-            "What does this paper tell us about the state of ML research?",
-            "Is this the kind of work that gets funded but doesn't advance the field?",
-            "What experiment would DEFINITIVELY prove or disprove their claims?",
-            "Synthesize the discussion so far. What's the consensus emerging?",
-            "Where do you disagree with the group? Make your case.",
+            "Respond to {target} — you disagree. Say why.",
+            "What does this paper tell us about where ML research is going?",
+            "Is this the kind of work that gets funded but doesn't help?",
+            "What experiment would clearly prove or disprove their claims?",
+            "Pull together the discussion so far. What's the agreement?",
+            "Where do you disagree with everyone? Make your case.",
         ],
     },
     {
@@ -174,14 +190,14 @@ PHASES = [
         "desc": "Bottom line — accept, reject, score, and why",
         "rounds": 20,
         "prompts": [
-            "Final verdict: accept or reject? Score 1-10. Justify in detail.",
-            "One-line summary of this paper's actual value to the field.",
-            "Would you cite this paper? In what context?",
-            "What's the lasting impact (if any) of this work?",
+            "Final verdict: accept or reject? Score 1-10. Explain clearly.",
+            "One-line summary of this paper's real value.",
+            "Would you cite this paper? When?",
+            "What lasting impact (if any) will this work have?",
             "Respond to {target}'s verdict. Agree or disagree?",
-            "If you could rewrite the abstract honestly, what would it say?",
-            "Summarize the biggest problem and the biggest strength.",
-            "Confidence score: how sure are you about your assessment?",
+            "If you rewrote the abstract honestly, what would it say?",
+            "Sum up the biggest problem and the biggest strength.",
+            "Confidence score: how sure are you about your take?",
         ],
     },
 ]
@@ -194,12 +210,315 @@ USER_COLORS = [
 FALLBACK_PAPERS = [
     {
         "title": "Attention Is All You Need",
-        "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English-to-German translation task, improving over the existing best results, including ensembles, by over 2 BLEU.",
+        "abstract": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train.",
         "authors": "Vaswani, Shazeer, Parmar, Uszkoreit, Jones, Gomez, Kaiser, Polosukhin",
         "link": "https://arxiv.org/abs/1706.03762",
+        "pdf_link": "https://arxiv.org/pdf/1706.03762",
         "categories": ["cs.CL", "cs.LG"],
     },
 ]
+
+# ━━ RAG ENGINE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+class PaperRAG:
+    """Handles downloading, chunking, indexing, and retrieving paper content."""
+
+    def __init__(self):
+        self.chunks = []
+        self.chunk_sources = []  # track which section each chunk came from
+        self.vectorizer = None
+        self.tfidf_matrix = None
+        self.full_text = ""
+        self.sections = {}
+        self.ready = False
+
+    def download_pdf(self, arxiv_link):
+        """Download PDF from arXiv. Returns path to temp file or None."""
+        # Convert abstract link to PDF link
+        pdf_url = arxiv_link
+        if "abs/" in pdf_url:
+            pdf_url = pdf_url.replace("abs/", "pdf/") + ".pdf"
+        elif not pdf_url.endswith(".pdf"):
+            pdf_url = pdf_url + ".pdf"
+
+        # Also try direct pdf link format
+        pdf_url = pdf_url.replace("http://", "https://")
+
+        print(f"  📥 Downloading PDF: {pdf_url}")
+        try:
+            req = urllib.request.Request(
+                pdf_url,
+                headers={"User-Agent": "Colloquium/1.0 (research tool)"}
+            )
+            tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                data = resp.read()
+                tmp.write(data)
+                tmp.flush()
+            print(f"  📥 Downloaded {len(data)} bytes → {tmp.name}")
+            return tmp.name
+        except Exception as e:
+            print(f"  ⚠ PDF download failed: {e}")
+            return None
+
+    def extract_text(self, pdf_path):
+        """Extract text from PDF using PyMuPDF. Returns full text string."""
+        if not fitz or not pdf_path:
+            return ""
+
+        try:
+            doc = fitz.open(pdf_path)
+            pages = []
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                text = page.get_text("text")
+                if text.strip():
+                    pages.append(text)
+            doc.close()
+
+            full = "\n\n".join(pages)
+
+            # Clean up common PDF artifacts
+            full = re.sub(r'\n{3,}', '\n\n', full)
+            full = re.sub(r'[ \t]{3,}', ' ', full)
+            full = re.sub(r'-\n(\w)', r'\1', full)  # fix hyphenation
+
+            # Remove headers/footers (lines that are just numbers or very short)
+            lines = full.split('\n')
+            cleaned = []
+            for line in lines:
+                stripped = line.strip()
+                if stripped and not re.match(r'^\d{1,3}$', stripped):
+                    cleaned.append(line)
+            full = '\n'.join(cleaned)
+
+            print(f"  📄 Extracted {len(full)} chars from {len(pages)} pages")
+
+            # Try to clean up temp file
+            try:
+                os.unlink(pdf_path)
+            except:
+                pass
+
+            return full
+
+        except Exception as e:
+            print(f"  ⚠ Text extraction failed: {e}")
+            return ""
+
+    def detect_sections(self, text):
+        """Try to find section headers and split text by section."""
+        # Common section patterns in ML papers
+        section_patterns = [
+            r'^(\d+\.?\s+(?:Introduction|Related Work|Background|Method|Methodology|'
+            r'Approach|Model|Architecture|Experiments|Results|Evaluation|Discussion|'
+            r'Conclusion|Limitations|Future Work|Appendix|Abstract|References))',
+            r'^((?:Introduction|Related Work|Background|Method|Methodology|'
+            r'Approach|Model|Architecture|Experiments|Results|Evaluation|Discussion|'
+            r'Conclusion|Limitations|Future Work|Appendix|Abstract|References))\s*$',
+        ]
+
+        sections = {}
+        current_section = "preamble"
+        current_text = []
+
+        for line in text.split('\n'):
+            found = False
+            for pat in section_patterns:
+                m = re.match(pat, line.strip(), re.IGNORECASE)
+                if m:
+                    # Save previous section
+                    if current_text:
+                        sections[current_section] = '\n'.join(current_text)
+                    current_section = m.group(1).strip().lower()
+                    current_text = []
+                    found = True
+                    break
+            if not found:
+                current_text.append(line)
+
+        # Save last section
+        if current_text:
+            sections[current_section] = '\n'.join(current_text)
+
+        if sections:
+            print(f"  📑 Found {len(sections)} sections: {list(sections.keys())[:8]}")
+
+        return sections
+
+    def chunk_text(self, text):
+        """Split text into overlapping chunks of roughly CHUNK_SIZE words."""
+        # First split into paragraphs
+        paragraphs = re.split(r'\n\s*\n', text)
+        paragraphs = [p.strip() for p in paragraphs if p.strip() and len(p.strip()) > 30]
+
+        chunks = []
+        current_chunk = []
+        current_words = 0
+
+        for para in paragraphs:
+            words = para.split()
+            para_len = len(words)
+
+            # If a single paragraph is bigger than chunk size, split it
+            if para_len > CHUNK_SIZE:
+                # Flush current chunk first
+                if current_chunk:
+                    chunks.append(' '.join(current_chunk))
+                    # Keep overlap
+                    overlap_text = ' '.join(current_chunk[-CHUNK_OVERLAP:]) if len(current_chunk) > CHUNK_OVERLAP else ''
+                    current_chunk = overlap_text.split() if overlap_text else []
+                    current_words = len(current_chunk)
+
+                # Split big paragraph
+                for i in range(0, para_len, CHUNK_SIZE - CHUNK_OVERLAP):
+                    chunk_words = words[i:i + CHUNK_SIZE]
+                    if len(chunk_words) > 20:  # skip tiny fragments
+                        chunks.append(' '.join(chunk_words))
+                current_chunk = []
+                current_words = 0
+                continue
+
+            # Would adding this paragraph exceed chunk size?
+            if current_words + para_len > CHUNK_SIZE and current_chunk:
+                chunks.append(' '.join(current_chunk))
+                # Keep overlap from end of previous chunk
+                overlap_words = current_chunk[-CHUNK_OVERLAP:] if len(current_chunk) > CHUNK_OVERLAP else current_chunk[:]
+                current_chunk = overlap_words + words
+                current_words = len(current_chunk)
+            else:
+                current_chunk.extend(words)
+                current_words += para_len
+
+        # Don't forget the last chunk
+        if current_chunk and len(current_chunk) > 20:
+            chunks.append(' '.join(current_chunk))
+
+        print(f"  🧩 Created {len(chunks)} chunks (avg {sum(len(c.split()) for c in chunks)//max(len(chunks),1)} words each)")
+        return chunks
+
+    def build_index(self, chunks):
+        """Build TF-IDF index over chunks for retrieval."""
+        if not chunks:
+            print("  ⚠ No chunks to index")
+            return
+
+        self.chunks = chunks
+        self.vectorizer = TfidfVectorizer(
+            max_features=8000,
+            stop_words='english',
+            ngram_range=(1, 2),  # unigrams and bigrams
+            sublinear_tf=True,
+        )
+        self.tfidf_matrix = self.vectorizer.fit_transform(chunks)
+        self.ready = True
+        print(f"  🔍 TF-IDF index built: {self.tfidf_matrix.shape}")
+
+    def retrieve(self, query, top_k=TOP_K):
+        """Retrieve top_k most relevant chunks for a query."""
+        if not self.ready or not self.chunks:
+            return []
+
+        try:
+            query_vec = self.vectorizer.transform([query])
+            scores = cosine_similarity(query_vec, self.tfidf_matrix).flatten()
+
+            # Get top_k indices
+            top_indices = np.argsort(scores)[::-1][:top_k]
+
+            results = []
+            for idx in top_indices:
+                if scores[idx] > 0.01:  # minimum relevance threshold
+                    results.append({
+                        "text": self.chunks[idx],
+                        "score": float(scores[idx]),
+                        "chunk_id": int(idx),
+                    })
+
+            return results
+
+        except Exception as e:
+            print(f"  ⚠ Retrieval error: {e}")
+            return []
+
+    def retrieve_for_prompt(self, prompt, phase_name, recent_discussion=""):
+        """Build a smart query from the prompt + context, then retrieve."""
+        # Combine prompt with recent discussion for better retrieval
+        query = prompt
+        if recent_discussion:
+            # Add key terms from recent discussion
+            query = f"{prompt} {recent_discussion[-300:]}"
+
+        # Boost query based on phase
+        phase_boosts = {
+            "FIRST_LOOK": "abstract introduction overview contribution",
+            "CLAIMS": "claim contribution result show demonstrate prove",
+            "METHODOLOGY": "method approach algorithm architecture design",
+            "MATH": "theorem proof equation lemma bound convergence loss",
+            "EXPERIMENTS": "experiment result table baseline dataset evaluation metric",
+            "NOVELTY_BS": "novel contribution prior work related compare",
+            "STRENGTHS": "advantage strength result improve performance",
+            "OPEN_DEBATE": "",
+            "VERDICT": "conclusion result contribution limitation",
+        }
+        boost = phase_boosts.get(phase_name, "")
+        if boost:
+            query = f"{query} {boost}"
+
+        return self.retrieve(query)
+
+    def format_context(self, retrieved_chunks):
+        """Format retrieved chunks into a string for the LLM prompt."""
+        if not retrieved_chunks:
+            return ""
+
+        parts = []
+        for i, chunk in enumerate(retrieved_chunks):
+            score = chunk["score"]
+            text = chunk["text"]
+            # Trim very long chunks
+            if len(text) > 600:
+                text = text[:600] + "..."
+            parts.append(f"[PAPER EXCERPT {i+1}] (relevance: {score:.2f})\n{text}")
+
+        return "\n\n".join(parts)
+
+    def load_paper(self, paper_info):
+        """Full pipeline: download → extract → chunk → index."""
+        link = paper_info.get("link", "") or paper_info.get("pdf_link", "")
+
+        print("\n  📚 RAG Pipeline Starting...")
+
+        # Step 1: Download PDF
+        pdf_path = self.download_pdf(link)
+
+        # Step 2: Extract text
+        if pdf_path:
+            self.full_text = self.extract_text(pdf_path)
+
+        # Step 3: Fall back to abstract if extraction failed
+        if not self.full_text or len(self.full_text) < 200:
+            print("  ⚠ Full text too short. Using abstract only.")
+            self.full_text = paper_info.get("abstract", "")
+            if not self.full_text:
+                print("  ❌ No text available at all.")
+                return
+
+        # Step 4: Detect sections
+        self.sections = self.detect_sections(self.full_text)
+
+        # Step 5: Chunk
+        chunks = self.chunk_text(self.full_text)
+
+        # Step 6: Build index
+        self.build_index(chunks)
+
+        print(f"  ✅ RAG ready: {len(self.chunks)} chunks indexed")
+        print(f"     Full text: {len(self.full_text)} chars")
+        print()
+
+
+# Global RAG instance
+rag = PaperRAG()
 
 # ━━ STATE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 state = {
@@ -255,7 +574,7 @@ def llm(system, history, instruction, model=MODEL):
     try:
         r = groq().chat.completions.create(
             model=model, messages=msgs,
-            temperature=0.82, max_tokens=250,
+            temperature=0.82, max_tokens=280,
         )
         t = r.choices[0].message.content.strip()
         t = re.sub(r'^[\w]+\s*[:—\-]\s*', '', t)
@@ -292,9 +611,10 @@ def fetch_paper():
             abstract = re.sub(r'\s+', ' ', entry.find("a:summary", ns).text.strip())
             authors = [a.find("a:name", ns).text for a in entry.findall("a:author", ns)]
             link = entry.find("a:id", ns).text
+            pdf_link = link
             for l in entry.findall("a:link", ns):
                 if l.get("title") == "pdf":
-                    link = l.get("href", link)
+                    pdf_link = l.get("href", link)
                     break
             categories = [c.get("term", "") for c in entry.findall("a:category", ns)]
             if len(abstract) > 150:
@@ -303,6 +623,7 @@ def fetch_paper():
                     "abstract": abstract,
                     "authors": ", ".join(authors[:5]) + ("..." if len(authors) > 5 else ""),
                     "link": link,
+                    "pdf_link": pdf_link,
                     "categories": categories[:5],
                 })
         if papers:
@@ -344,6 +665,7 @@ def handle_user(paper, history):
         except: break
     time.sleep(random.uniform(2, USER_WAIT))
     agent = random.choice(AGENTS)
+
     recent = []
     for m in state["messages"][-10:]:
         if m.get("type") == "user":
@@ -351,14 +673,27 @@ def handle_user(paper, history):
         elif m.get("type") == "message":
             recent.append(f'{m["speaker"]}: {m["text"]}')
     ctx = "\n".join(recent[-6:])
+
+    # RAG: retrieve relevant chunks for the user's question
+    user_text = umsg.get("text", "")
+    retrieved = rag.retrieve_for_prompt(user_text, state.get("phase", "OPEN_DEBATE"), ctx)
+    rag_context = rag.format_context(retrieved)
+
     system = (
         f"You are {agent['name']}, an ML researcher.\n"
         f"Tone: {agent['tone']}\n"
-        f'Discussing: "{paper["title"]}"\n'
-        f"Abstract: {paper['abstract'][:500]}\n"
-        f"A human asked something. Respond directly, use their name. Stay sharp. Under 90 words."
+        f'Discussing paper: "{paper["title"]}"\n\n'
+        f"RELEVANT EXCERPTS FROM THE ACTUAL PAPER:\n"
+        f"{rag_context}\n\n"
+        f"A human asked something. Respond directly using their name.\n"
+        f"IMPORTANT RULES:\n"
+        f"- Quote specific lines from the paper excerpts above when making points\n"
+        f"- Use simple, clear English. No jargon unless needed.\n"
+        f"- Be specific and grounded. Only say things you can back up from the text.\n"
+        f"- Under 90 words."
     )
     inst = f"Recent:\n{ctx}\n\nRespond to the human. Under 90 words."
+
     state["typing"] = agent["name"]
     bus.emit("typing", {
         "name": agent["name"], "avatar": agent["avatar"],
@@ -383,42 +718,55 @@ def generate_report(paper, history):
     ]
     digest = "\n".join(all_msgs[-80:])
 
+    # Get broad paper context for the report
+    broad_chunks = rag.retrieve("abstract introduction methodology results conclusion contributions", top_k=6)
+    paper_context = rag.format_context(broad_chunks)
+
     sections = [
         ("EXECUTIVE SUMMARY",
-         "Write a 150-word executive summary of the full discussion. What was concluded about this paper overall?"),
+         "Write a 150-word executive summary of the full discussion. What was the conclusion about this paper? Use simple English."),
         ("KEY STRENGTHS IDENTIFIED",
-         "Based on the discussion, list the genuine strengths found. Be specific. Reference what was discussed. 120 words max."),
+         "Based on the discussion, list genuine strengths found. Be specific. Quote the paper where possible. 120 words max. Simple English."),
         ("CRITICAL PROBLEMS FOUND",
-         "List every problem, flaw, and weakness identified during the discussion. Be thorough and specific. 150 words max."),
+         "List every problem, flaw, and weakness found during the discussion. Be thorough. Reference specific paper content. 150 words max."),
         ("MATHEMATICAL & THEORETICAL CONCERNS",
-         "Summarize all math/theory concerns raised. Assumptions questioned, rigor issues, missing proofs. 120 words max."),
+         "Summarize all math and theory concerns raised. What assumptions were questioned? What rigor issues? 120 words max."),
         ("METHODOLOGY ISSUES",
-         "Summarize methodology problems identified. What's wrong with how they did it? 120 words max."),
+         "Summarize methodology problems found. What's wrong with how they did it? Reference the paper. 120 words max."),
         ("EXPERIMENTAL GAPS",
-         "What experiments are missing? What evaluation problems were identified? 120 words max."),
+         "What experiments are missing? What evaluation problems were found? 120 words max."),
         ("NOVELTY ASSESSMENT",
-         "How novel is this work really? Summarize the group's consensus on originality. Is this published for the sake of publishing? 100 words max."),
+         "How novel is this work really? Summarize the group's view on originality. Is this published just to publish? 100 words max."),
         ("ACCEPT / REJECT RECOMMENDATION",
-         "Final recommendation: accept or reject at a top venue. Score 1-10. Confidence level. Clear justification. 100 words max."),
+         "Final call: accept or reject at a top venue. Score 1-10. Confidence level. Clear reason. 100 words max."),
         ("SUGGESTED IMPROVEMENTS",
-         "What would make this paper actually good? Concrete actionable suggestions. 120 words max."),
+         "What would make this paper actually good? Concrete suggestions the authors can act on. 120 words max."),
         ("ONE-LINE VERDICT",
-         "One devastating or praising sentence that captures the essence of this paper. Be memorable."),
+         "One sharp sentence that captures this paper's real worth. Be memorable."),
     ]
 
     report_parts = []
     system = (
         f"You are writing a structured research analysis report.\n"
         f'Paper: "{paper["title"]}"\n'
-        f"Authors: {paper['authors']}\n"
-        f"Abstract: {paper['abstract']}\n\n"
-        f"Based on a 6-hour roundtable discussion among 5 ML researchers. "
-        f"Write clearly, specifically, and honestly. No fluff."
+        f"Authors: {paper['authors']}\n\n"
+        f"PAPER EXCERPTS:\n{paper_context}\n\n"
+        f"Based on a long roundtable discussion among 5 ML researchers.\n"
+        f"Write clearly, specifically, and honestly. Use simple English. No fluff. No jargon unless needed.\n"
+        f"Quote the paper directly when possible."
     )
 
     for title, inst in sections:
         try:
-            full_inst = f"Discussion transcript (last portion):\n{digest}\n\n{inst}"
+            # Retrieve specific chunks relevant to this report section
+            section_chunks = rag.retrieve(f"{title} {inst[:100]}", top_k=3)
+            section_context = rag.format_context(section_chunks)
+
+            full_inst = (
+                f"Discussion transcript (last portion):\n{digest}\n\n"
+                f"Relevant paper excerpts:\n{section_context}\n\n"
+                f"{inst}"
+            )
             text = llm(system, [], full_inst)
             report_parts.append({"title": title, "content": text})
             print(f"    ✓ {title}")
@@ -434,6 +782,7 @@ def generate_report(paper, history):
         "paper_link": paper["link"],
         "sections": report_parts,
         "total_messages": len(all_msgs),
+        "rag_chunks": len(rag.chunks),
         "time": now_hm(),
     }
     state["messages"].append(report_msg)
@@ -453,13 +802,23 @@ def engine():
     print(f"     {paper['authors']}")
     print(f"     {', '.join(paper['categories'][:3])}")
     print(f"     ⏱ {tleft()//60}m session")
-    print(f"{'='*60}\n")
+    print(f"{'='*60}")
+
+    # ━━ RAG: LOAD AND INDEX THE FULL PAPER ━━━━━━━
+    rag.load_paper(paper)
+
+    if rag.ready:
+        rag_status = f"📚 Full paper indexed: {len(rag.chunks)} chunks from {len(rag.full_text)} chars"
+    else:
+        rag_status = "⚠ RAG not available. Using abstract only."
+    print(f"  {rag_status}\n")
 
     pmsg = {
         "type": "paper", "title": paper["title"],
         "abstract": paper["abstract"],
         "authors": paper["authors"], "link": paper["link"],
         "categories": paper["categories"],
+        "rag_status": rag_status,
         "time": now_hm(),
     }
     state["messages"].append(pmsg)
@@ -523,7 +882,7 @@ def engine():
 
             prompt = random.choice(phase["prompts"]).format(target=target["name"])
 
-            # build context from recent discussion
+            # Build context from recent discussion
             recent = [
                 f'{m["speaker"]}: {m["text"]}'
                 for m in state["messages"][-12:]
@@ -531,22 +890,43 @@ def engine():
             ]
             recent_ctx = "\n".join(recent[-8:])
 
+            # ━━ RAG RETRIEVAL FOR THIS TURN ━━━━━━━━
+            retrieved = rag.retrieve_for_prompt(prompt, phase["name"], recent_ctx)
+            rag_context = rag.format_context(retrieved)
+
+            # Build system prompt with RAG context
+            if rag_context:
+                paper_section = (
+                    f"RELEVANT EXCERPTS FROM THE ACTUAL PAPER:\n"
+                    f"{rag_context}\n\n"
+                    f"USE THESE EXCERPTS. Quote specific lines. "
+                    f"Say things like 'the paper states...' or 'they write...' and give the actual words."
+                )
+            else:
+                paper_section = (
+                    f"Abstract: {paper['abstract']}\n\n"
+                    f"(Full paper text not available. Work from the abstract.)"
+                )
+
             system = (
                 f"You are {agent['name']}, an ML researcher in a deep paper review session.\n"
                 f"Tone: {agent['tone']}\n\n"
                 f'Paper: "{paper["title"]}"\n'
-                f"Authors: {paper['authors']}\n"
-                f"Abstract: {paper['abstract']}\n\n"
+                f"Authors: {paper['authors']}\n\n"
+                f"{paper_section}\n\n"
                 f"Phase: {phase['label']} — {phase['desc']}\n"
-                f"{'Some humans are in the discussion too.' if users else ''}\n"
-                f"Be substantive, specific, critical, honest. No generic statements.\n"
-                f"Reference the actual paper content. Don't start with your name.\n"
-                f"Under 120 words. Make every sentence count."
+                f"{'Some humans are in the discussion too.' if users else ''}\n\n"
+                f"RULES:\n"
+                f"- Quote specific lines from the paper excerpts when making points\n"
+                f"- Use simple, clear English. Explain technical terms if you use them.\n"
+                f"- Be specific. Every claim you make should be grounded in the text above.\n"
+                f"- Don't start with your name.\n"
+                f"- Under 120 words. Make every sentence count."
             )
 
             inst = f"{prompt}\n\nRecent discussion:\n{recent_ctx}" if recent_ctx else prompt
 
-            # weave in user comments
+            # Weave in user comments
             for m in reversed(state["messages"][-10:]):
                 if m.get("type") == "user":
                     if random.random() < 0.3:
@@ -562,7 +942,7 @@ def engine():
                 state["typing"] = None
                 rnd += 1
 
-            # gap
+            # Gap between messages
             if rnd < phase["rounds"] and time.time() < phase_deadline:
                 nxt = AGENTS[rnd % len(AGENTS)]
                 remaining_phase = max(0, int(phase_deadline - time.time()))
@@ -581,7 +961,7 @@ def engine():
                     except queue.Empty:
                         pass
 
-        # phase done
+        # Phase done
         phase_msgs = len([m for m in state["messages"] if m.get("type") == "message"])
         dmsg = {
             "type": "system",
@@ -595,7 +975,7 @@ def engine():
     # ━━ FINAL REPORT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     rpt_msg = {
         "type": "system",
-        "text": "📝 Generating comprehensive analysis report... this may take a minute.",
+        "text": "📝 Generating analysis report... this may take a minute.",
         "time": now_hm(),
     }
     state["messages"].append(rpt_msg)
@@ -603,15 +983,16 @@ def engine():
 
     generate_report(paper, history)
 
-    # shutdown
+    # Shutdown
     cnt = len([m for m in state["messages"] if m.get("type") == "message"])
     ucnt = len([m for m in state["messages"] if m.get("type") == "user"])
     bus.emit("shutdown", {
         "total_msgs": cnt, "user_msgs": ucnt,
         "users": len(users), "paper": paper["title"],
         "phases_completed": state["phase_idx"] + 1,
+        "rag_chunks": len(rag.chunks),
     })
-    print(f"\n⏰ Done. {cnt} agent msgs · {ucnt} human · {state['phase_idx']+1} phases.")
+    print(f"\n⏰ Done. {cnt} agent msgs · {ucnt} human · {state['phase_idx']+1} phases · {len(rag.chunks)} RAG chunks.")
 
 # ━━ FLASK ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 app = Flask(__name__)
@@ -669,6 +1050,8 @@ def stream():
             "timeleft": tleft(),
             "users": list(users.values()),
             "viewers": bus.viewers,
+            "rag_ready": rag.ready,
+            "rag_chunks": len(rag.chunks),
         }
         yield f"event: fullstate\ndata: {json.dumps(init)}\n\n"
         try:
@@ -739,8 +1122,6 @@ body{
   display:flex;flex-direction:column;background:var(--bg);
   box-shadow:0 0 60px rgba(0,0,0,.6);position:relative;
 }
-
-/* header */
 .hdr{
   display:flex;align-items:center;gap:.6rem;
   padding:.5rem .8rem;background:var(--hdr);min-height:56px;z-index:10;
@@ -759,8 +1140,8 @@ body{
 .b-msg{background:rgba(0,168,132,.15);color:var(--grn)}
 .b-eye{background:rgba(83,189,235,.12);color:var(--blu)}
 .b-ph{background:rgba(255,152,0,.12);color:#ff9800}
+.b-rag{background:rgba(171,71,188,.12);color:#ab47bc}
 
-/* phase bar */
 .pbar{
   display:flex;gap:1px;padding:.2rem .8rem;
   background:rgba(0,0,0,.15);border-bottom:1px solid var(--brd);
@@ -773,7 +1154,6 @@ body{
 .pbar .seg.on{background:var(--grn);animation:pls 1.5s ease infinite}
 @keyframes pls{0%,100%{opacity:1}50%{opacity:.35}}
 
-/* participants */
 .parts{
   display:flex;gap:.3rem;padding:.3rem .8rem;
   background:rgba(0,0,0,.15);border-bottom:1px solid var(--brd);
@@ -788,7 +1168,6 @@ body{
 }
 .chip .cdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
 
-/* chat */
 .chat{
   flex:1;overflow-y:auto;overflow-x:hidden;
   padding:.5rem .6rem;background:var(--bg);
@@ -796,7 +1175,6 @@ body{
 .chat::-webkit-scrollbar{width:4px}
 .chat::-webkit-scrollbar-thumb{background:var(--brd);border-radius:4px}
 
-/* system pills */
 .sys{text-align:center;margin:.7rem 0}
 .pill{
   display:inline-block;background:var(--sys);color:var(--tx2);
@@ -810,7 +1188,6 @@ body{
 }
 .pill.ph .pd{color:var(--tx2);font-weight:400;font-size:.68rem;margin-top:2px}
 
-/* paper card */
 .pc{
   background:var(--hdr);border:1px solid var(--brd);
   border-radius:10px;padding:.8rem .9rem;margin:.6rem 0;
@@ -838,8 +1215,12 @@ body{
   color:var(--grn);text-decoration:none;
 }
 .pc .plnk:hover{text-decoration:underline}
+.pc .rag-badge{
+  display:inline-block;margin-top:.4rem;margin-left:.5rem;
+  font-size:.58rem;color:#ab47bc;background:rgba(171,71,188,.1);
+  padding:.1rem .4rem;border-radius:8px;border:1px solid rgba(171,71,188,.2);
+}
 
-/* report card */
 .rpt{
   background:var(--hdr);border:1px solid var(--grn);
   border-radius:10px;padding:1rem;margin:.8rem 0;
@@ -863,7 +1244,6 @@ body{
   font-size:.6rem;color:var(--tx2);
 }
 
-/* bubbles */
 .msg{display:flex;flex-direction:column;margin-bottom:2px;animation:up .25s ease}
 @keyframes up{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .msg.left{align-items:flex-start;padding-right:3rem}
@@ -902,6 +1282,13 @@ body{
 .msg.umsg.left .body{background:#1a2a3a}
 .msg.umsg.left .body::before{border-right-color:#1a2a3a}
 
+/* quoted paper text styling */
+.msg .body q, .msg .body blockquote{
+  display:block;border-left:2px solid var(--grn);
+  padding-left:.4rem;margin:.3rem 0;font-style:italic;
+  color:var(--tx2);font-size:.82rem;
+}
+
 .cursor{
   display:inline-block;width:2px;height:.95em;background:var(--grn);
   margin-left:1px;animation:bk .7s step-end infinite;vertical-align:text-bottom;
@@ -914,7 +1301,6 @@ body{
 .tdots span:nth-child(3){animation-delay:.4s}
 @keyframes dp{0%,80%,100%{opacity:.3;transform:scale(.8)}40%{opacity:1;transform:scale(1)}}
 
-/* input bar */
 .ibar{
   display:flex;align-items:center;gap:.5rem;
   padding:.45rem .6rem;background:var(--hdr);
@@ -982,7 +1368,7 @@ body{
     <h1>🔬 <span class="ac">Colloquium</span></h1>
     <div class="sub">
       6-hour deep teardown of one ML paper<br>
-      5 researchers · 9 phases · no mercy
+      5 researchers · 9 phases · full paper RAG · no mercy
     </div>
     <input type="text" id="nin" placeholder="Your name..." maxlength="20"
       onkeydown="if(event.key==='Enter')doJ()">
@@ -992,7 +1378,8 @@ body{
       🔹 Aria · 🔸 Kai · 🟢 Noor · 🔻 Sasha · 🟣 Ravi<br>
       First Read → Claims → Method → Math → Experiments →<br>
       Novelty/BS → Strengths → Open Debate → Verdict<br>
-      Full analysis report generated at session end
+      📚 Full paper downloaded, chunked &amp; indexed via RAG<br>
+      Agents quote specific lines from the actual paper
     </div>
   </div>
 </div>
@@ -1006,6 +1393,7 @@ body{
     </div>
     <div class="hdr-right">
       <div class="bdg b-ph" id="bph">📋 0/9</div>
+      <div class="bdg b-rag" id="brag" title="RAG chunks indexed">📚 0</div>
       <div class="bdg b-eye" id="beye">👁 0</div>
       <div class="bdg b-msg" id="bmsg">💬 0</div>
       <div class="bdg b-die" id="bdie">💀 --</div>
@@ -1040,7 +1428,7 @@ const chat=$('chat');
 let myId=null,myN=null,myC=null,joined=false;
 let agents=[],boot=0,maxU=0,mc=0,lw='',tIv=null,nPh=9;
 let cBub=null,cTxt=null,tBub=null;
-let sUp=false,miss=0;
+let sUp=false,miss=0,ragChunks=0;
 
 function scr(){if(!sUp)chat.scrollTop=chat.scrollHeight}
 function jmpB(){sUp=false;miss=0;chat.scrollTop=chat.scrollHeight;$('scb').style.display='none';$('ub').style.display='none'}
@@ -1094,6 +1482,12 @@ function stmr(){
 function sH(h){$('hsub').innerHTML=h}
 function sW(h){$('wtxt').innerHTML=h}
 
+function uRAG(n){
+  ragChunks=n||0;
+  $('brag').textContent='📚 '+ragChunks;
+  if(ragChunks>0)$('brag').title='RAG: '+ragChunks+' paper chunks indexed';
+}
+
 function uPB(idx,tot){
   nPh=tot||nPh;
   let h='';for(let i=0;i<nPh;i++){
@@ -1128,6 +1522,7 @@ function phPill(p){
 function pCard(p){
   const id='a'+Date.now();
   const d=document.createElement('div');d.className='pc';
+  const ragBadge=p.rag_status?`<span class="rag-badge">📚 ${p.rag_status}</span>`:'';
   d.innerHTML=
     `<div class="lab">TODAY'S PAPER · 6-HOUR DEEP DIVE</div>`+
     `<div class="pt">${p.title}</div>`+
@@ -1135,7 +1530,8 @@ function pCard(p){
     `<div class="pabs" id="${id}">${p.abstract}</div>`+
     `<span class="ptog" onclick="var e=document.getElementById('${id}');if(e.classList.contains('open')){e.classList.remove('open');this.textContent='show full abstract ▾'}else{e.classList.add('open');this.textContent='collapse ▴'}">show full abstract ▾</span>`+
     `<div class="pcats">${(p.categories||[]).map(c=>'<span class="pcat">'+c+'</span>').join('')}</div>`+
-    (p.link?`<a class="plnk" href="${p.link}" target="_blank" rel="noopener">→ view on arXiv</a>`:'');
+    (p.link?`<a class="plnk" href="${p.link}" target="_blank" rel="noopener">→ view on arXiv</a>`:'')+
+    ragBadge;
   chat.appendChild(d);scr();
 }
 function rptCard(r){
@@ -1145,7 +1541,9 @@ function rptCard(r){
   (r.sections||[]).forEach(s=>{
     h+=`<div class="rpt-sec"><h3>${s.title}</h3><p>${s.content}</p></div>`;
   });
-  h+=`<div class="rpt-stats">${r.total_messages} messages analyzed · ${r.time} UTC</div>`;
+  h+=`<div class="rpt-stats">${r.total_messages} messages analyzed`;
+  if(r.rag_chunks)h+=` · ${r.rag_chunks} paper chunks indexed`;
+  h+=` · ${r.time} UTC</div>`;
   if(r.paper_link)h+=`<a class="plnk" href="${r.paper_link}" target="_blank" style="display:block;margin-top:.4rem;font-size:.62rem">→ original paper</a>`;
   d.innerHTML=h;chat.appendChild(d);scr();
 }
@@ -1203,11 +1601,13 @@ function sse(){
     boot=d.boot;maxU=d.max_up;agents=d.agents||[];nPh=d.total_phases||9;
     rParts(d.users);
     $('beye').textContent='👁 '+(d.viewers||0);
+    uRAG(d.rag_chunks||0);
     if(d.phase_idx>=0)uPB(d.phase_idx,nPh);
     else{let h='';for(let i=0;i<nPh;i++)h+=`<div class="seg"></div>`;$('pbar').innerHTML=h}
     sH(d.paper?d.paper.title.substring(0,45)+'...':'loading paper...');
     chat.innerHTML='';mc=0;lw='';
-    sPill('🔬 <b>Colloquium</b> — deep paper teardown','');
+    sPill('🔬 <b>Colloquium</b> — deep paper teardown with RAG','');
+    if(d.rag_ready)sPill('📚 Full paper indexed: '+d.rag_chunks+' chunks — agents will quote specific lines','');
     if(d.messages)d.messages.forEach(m=>{
       if(m.type==='paper')pCard(m);
       else if(m.type==='phase')phPill(m);
@@ -1229,8 +1629,8 @@ function sse(){
   });
   es.addEventListener('typing',e=>{
     const d=JSON.parse(e.data);addT(d.name,d.avatar,d.color);
-    sH(`<span class="typ">${d.avatar} ${d.name} thinking...</span>`);
-    sW(`${d.avatar} ${d.name} analyzing...`);
+    sH(`<span class="typ">${d.avatar} ${d.name} reading paper...</span>`);
+    sW(`${d.avatar} ${d.name} checking paper...`);
   });
   es.addEventListener('msgstart',e=>{
     const d=JSON.parse(e.data);sBub(d.speaker,d.avatar,d.color,d.time);
@@ -1245,7 +1645,11 @@ function sse(){
   });
   es.addEventListener('usermsg',e=>{uBub(JSON.parse(e.data))});
   es.addEventListener('system',e=>{sPill(JSON.parse(e.data).text,'')});
-  es.addEventListener('report',e=>{rptCard(JSON.parse(e.data))});
+  es.addEventListener('report',e=>{
+    const d=JSON.parse(e.data);
+    rptCard(d);
+    if(d.rag_chunks)uRAG(d.rag_chunks);
+  });
   es.addEventListener('presence',e=>{
     const d=JSON.parse(e.data);rParts(d.users);
     $('beye').textContent='👁 '+(d.viewers||0);
@@ -1260,7 +1664,8 @@ function sse(){
     const div=document.createElement('div');div.className='sd';
     div.innerHTML=`<div class="big">⏱ Session Complete</div>`+
       `<div class="sm">"${d.paper}"</div>`+
-      `<div class="sm">${d.total_msgs} agent messages · ${d.user_msgs} human · ${d.phases_completed} phases · ${d.users} participants</div>`;
+      `<div class="sm">${d.total_msgs} agent messages · ${d.user_msgs} human · ${d.phases_completed} phases · ${d.users} participants</div>`+
+      (d.rag_chunks?`<div class="sm">📚 ${d.rag_chunks} paper chunks were indexed and searched</div>`:'');
     chat.appendChild(div);scr();
     sH('session ended');sW('offline');
     $('bdie').textContent='💀 DEAD';
@@ -1278,13 +1683,14 @@ $('nin').focus();
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("🔬 Colloquium — Deep Single-Paper Teardown")
+    print("🔬 Colloquium — Deep Single-Paper Teardown with RAG")
     print(f"   model       : {MODEL}")
     print(f"   backup      : {BACKUP}")
     print(f"   gap         : {GAP}s")
     print(f"   phases      : {len(PHASES)} ({', '.join(p['name'] for p in PHASES)})")
     print(f"   agents      : {', '.join(a['avatar']+' '+a['name'] for a in AGENTS)}")
     print(f"   max uptime  : {MAX_UP//3600}h {MAX_UP%3600//60}m")
+    print(f"   RAG chunks  : ~{CHUNK_SIZE} words, overlap {CHUNK_OVERLAP}, top-{TOP_K}")
     print(f"   report      : generated at end")
     print("=" * 60)
     import sys
@@ -1295,4 +1701,11 @@ if __name__ == "__main__":
 
 
 
-# ━━ STATE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+
+
+
+
+
+
